@@ -56,6 +56,59 @@ def write_pitcher_game_stats(silver_dir: Path) -> Callable[[list[dict]], Path]:
     return _write
 
 
+_EMPTY_SCHEMAS = {
+    "games": {
+        "game_pk": "int64",
+        "game_date": "object",
+        "status": "object",
+        "home_team_id": "int64",
+        "away_team_id": "int64",
+        "home_score": "int64",
+        "away_score": "int64",
+        "total_runs": "int64",
+        "home_win": "bool",
+    },
+    "team_game_stats": {
+        "game_pk": "int64",
+        "team_id": "int64",
+        "is_home": "bool",
+        "runs": "int64",
+    },
+    "pitcher_game_stats": {
+        "game_pk": "int64",
+        "team_id": "int64",
+        "pitcher_id": "int64",
+        "is_starter": "bool",
+        "innings_pitched": "float64",
+        "earned_runs": "int64",
+        "strikeouts": "int64",
+    },
+}
+
+
+@pytest.fixture
+def write_empty_silver(silver_dir: Path) -> Callable[[str], Path]:
+    """Write an empty silver parquet with the right schema for tables a test doesn't populate."""
+
+    def _write(name: str) -> Path:
+        schema = _EMPTY_SCHEMAS[name]
+        df = pd.DataFrame({col: pd.Series([], dtype=dtype) for col, dtype in schema.items()})
+        return _write_parquet(silver_dir, name, df)
+
+    return _write
+
+
+@pytest.fixture(autouse=True)
+def _prepopulate_empty_silver(silver_dir: Path):
+    """Pre-populate every silver table as an empty placeholder so any feature
+    SQL runs (returning zero rows if the test didn't provide data). Real
+    fixture writes overwrite these — parquet writes are file-level replace.
+    """
+    for name, schema in _EMPTY_SCHEMAS.items():
+        df = pd.DataFrame({col: pd.Series([], dtype=dtype) for col, dtype in schema.items()})
+        _write_parquet(silver_dir, name, df)
+
+
 # ---------------------------------------------------------------------------
 # Helpers for building consistent (games, team_game_stats) fixtures.
 # ---------------------------------------------------------------------------
