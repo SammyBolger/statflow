@@ -41,6 +41,7 @@ def _starter_series(
                 "away_score": er,
                 "total_runs": 3 + er,
                 "home_win": er < 3,
+                "venue_id": team_id,
             }
         )
         pitcher_stats.append(
@@ -158,6 +159,7 @@ def test_relievers_are_excluded(silver_dir, gold_dir, write_games, write_pitcher
             "away_score": 3,
             "total_runs": 8,
             "home_win": True,
+            "venue_id": 100,
         }
     ]
     write_games(games)

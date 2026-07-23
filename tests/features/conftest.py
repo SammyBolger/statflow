@@ -67,6 +67,7 @@ _EMPTY_SCHEMAS = {
         "away_score": "int64",
         "total_runs": "int64",
         "home_win": "bool",
+        "venue_id": "int64",
     },
     "team_game_stats": {
         "game_pk": "int64",
@@ -152,6 +153,7 @@ def build_head_to_head_series(
                 "away_score": a_runs,
                 "total_runs": h_runs + a_runs,
                 "home_win": h_runs > a_runs,
+                "venue_id": h_team,  # simple: each home team has its own venue
             }
         )
         stats.append({"game_pk": game_pk, "team_id": h_team, "is_home": True, "runs": h_runs})

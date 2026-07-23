@@ -15,7 +15,7 @@ from statflow.config import GOLD_DIR, SILVER_DIR
 
 SQL_DIR = Path(__file__).parent / "sql"
 
-SQL_TRANSFORMS: list[str] = ["team_rolling", "pitcher_form"]
+SQL_TRANSFORMS: list[str] = ["team_rolling", "pitcher_form", "park_factors"]
 
 SILVER_VIEWS = ("games", "team_game_stats", "pitcher_game_stats")
 

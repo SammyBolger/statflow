@@ -34,6 +34,7 @@ def _fixed_team_series(runs_per_game: list[int], team_id: int = 100, opp_id: int
                 "away_score": 0,
                 "total_runs": runs,
                 "home_win": runs > 0,
+                "venue_id": team_id,
             }
         )
         stats.append({"game_pk": game_pk, "team_id": team_id, "is_home": True, "runs": runs})
@@ -128,6 +129,7 @@ def test_runs_allowed_uses_opponent_runs(silver_dir, gold_dir, write_games, writ
                 "away_score": 7,
                 "total_runs": 8,
                 "home_win": False,
+                "venue_id": 100,
             }
         )
         stats.append({"game_pk": game_pk, "team_id": 100, "is_home": True, "runs": 1})
@@ -143,6 +145,37 @@ def test_runs_allowed_uses_opponent_runs(silver_dir, gold_dir, write_games, writ
     assert team_100.iloc[10]["runs_allowed_l10"] == pytest.approx(7.0)
     assert team_100.iloc[10]["runs_scored_l10"] == pytest.approx(1.0)
     assert team_100.iloc[10]["win_pct_l10"] == pytest.approx(0.0)
+
+
+def test_days_rest_first_game_null(silver_dir, gold_dir, write_games, write_team_game_stats):
+    games, stats = _fixed_team_series([5])
+    write_games(games)
+    write_team_game_stats(stats)
+
+    build_features(silver_dir=silver_dir, gold_dir=gold_dir)
+
+    df = pd.read_parquet(gold_dir / "team_rolling" / "team_rolling.parquet")
+    row = df[df["team_id"] == 100].iloc[0]
+    assert pd.isna(row["days_rest"])
+
+
+def test_days_rest_daily_games(silver_dir, gold_dir, write_games, write_team_game_stats):
+    """A team playing every day has days_rest=1 (previous game was yesterday)."""
+    games, stats = _fixed_team_series([1, 2, 3])
+    write_games(games)
+    write_team_game_stats(stats)
+
+    build_features(silver_dir=silver_dir, gold_dir=gold_dir)
+
+    df = (
+        pd.read_parquet(gold_dir / "team_rolling" / "team_rolling.parquet")
+        .query("team_id == 100")
+        .sort_values("game_pk")
+        .reset_index(drop=True)
+    )
+    assert pd.isna(df.iloc[0]["days_rest"])
+    assert df.iloc[1]["days_rest"] == 1
+    assert df.iloc[2]["days_rest"] == 1
 
 
 def test_no_cross_team_contamination(

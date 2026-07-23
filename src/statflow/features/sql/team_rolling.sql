@@ -37,11 +37,22 @@ SELECT
     AVG(CAST(won AS INTEGER)) OVER w AS win_pct_l10,
     -- Count only rows with an actual runs value — scheduled games (NULL runs)
     -- shouldn't inflate the "how much history do we have" signal.
-    COUNT(runs_scored) OVER w AS n_prior_games
+    COUNT(runs_scored) OVER w AS n_prior_games,
+    -- Days since this team's previous game. LAG uses the ordered window,
+    -- ignoring the ROWS BETWEEN clause on `w`.
+    DATE_DIFF(
+        'day',
+        LAG(game_date, 1) OVER team_order,
+        game_date
+    ) AS days_rest
 FROM team_perspective
-WINDOW w AS (
-    PARTITION BY team_id
-    ORDER BY game_date, game_pk
-    ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
-)
+WINDOW
+    w AS (
+        PARTITION BY team_id
+        ORDER BY game_date, game_pk
+        ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
+    ),
+    team_order AS (
+        PARTITION BY team_id ORDER BY game_date, game_pk
+    )
 ORDER BY team_id, game_date, game_pk;
