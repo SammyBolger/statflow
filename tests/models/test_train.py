@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, Ridge
 
 from statflow.models.data import FEATURE_COLS, Split
-from statflow.models.train import fit_and_evaluate_classifier
+from statflow.models.train import fit_and_evaluate_classifier, fit_and_evaluate_regressor
 
 
 def _synthetic_features(n: int, seed: int = 0) -> pd.DataFrame:
@@ -111,3 +111,66 @@ def test_fit_and_evaluate_beats_naive_baseline_on_separable_data():
 
     # Deterministic separation → LR should crush a naive 0.5 baseline.
     assert metrics["val"].accuracy >= 0.85
+
+
+# ---------------------------------------------------------------------------
+# Regression tests
+# ---------------------------------------------------------------------------
+
+
+def test_fit_and_evaluate_regressor_returns_metrics_for_each_split():
+    split = _split()
+    model = Ridge(alpha=1.0)
+
+    model, metrics = fit_and_evaluate_regressor(model, split)
+
+    assert set(metrics.keys()) == {"train", "val", "test"}
+    for name, m in metrics.items():
+        assert m.n > 0, f"empty metrics for {name}"
+        assert m.mae >= 0.0
+        assert m.rmse >= m.mae  # RMSE is always >= MAE
+        assert 0.0 <= m.within_1 <= 1.0
+        assert 0.0 <= m.within_2 <= 1.0
+
+
+def test_regressor_skips_empty_splits():
+    split = Split(
+        train=_synthetic_features(60, seed=1),
+        val=_synthetic_features(20, seed=2),
+        test=pd.DataFrame(columns=_synthetic_features(1).columns),
+    )
+    model = Ridge(alpha=1.0)
+    _, metrics = fit_and_evaluate_regressor(model, split)
+    assert set(metrics.keys()) == {"train", "val"}
+
+
+def test_regressor_beats_mean_baseline_on_separable_data():
+    """Total runs is a deterministic linear function of one feature — Ridge
+    should hit near-zero MAE."""
+    n = 200
+    rng = np.random.default_rng(42)
+    rows = []
+    for i in range(n):
+        park = rng.random()  # in [0, 1)
+        row = {
+            "game_pk": i,
+            "season": 2024,
+            "target_home_win": True,
+            "target_total_runs": int(round(10 * park + 3)),
+        }
+        for col in FEATURE_COLS:
+            row[col] = float(rng.normal(loc=5.0, scale=2.0))
+        row["venue_park_factor_runs"] = park
+        rows.append(row)
+
+    all_df = pd.DataFrame(rows)
+    split = Split(
+        train=all_df.iloc[:120].reset_index(drop=True),
+        val=all_df.iloc[120:160].reset_index(drop=True),
+        test=all_df.iloc[160:].reset_index(drop=True),
+    )
+    _, metrics = fit_and_evaluate_regressor(Ridge(alpha=0.01), split)
+
+    # Mean-baseline MAE is roughly the standard deviation of the target.
+    # A model that learned the linear relationship should be dramatically better.
+    assert metrics["val"].mae < 1.0
