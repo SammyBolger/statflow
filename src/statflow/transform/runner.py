@@ -21,7 +21,7 @@ SQL_DIR = Path(__file__).parent / "sql"
 
 # Silver tables built purely from `.sql` files. Order doesn't matter here —
 # each is derived from bronze only.
-SQL_TRANSFORMS: list[str] = ["games"]
+SQL_TRANSFORMS: list[str] = ["games", "team_game_stats"]
 
 # Which bronze tables we expose as DuckDB views.
 BRONZE_VIEWS = ("schedule", "boxscores", "plays", "transactions")
