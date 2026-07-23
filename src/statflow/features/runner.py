@@ -15,7 +15,8 @@ from statflow.config import GOLD_DIR, SILVER_DIR
 
 SQL_DIR = Path(__file__).parent / "sql"
 
-SQL_TRANSFORMS: list[str] = ["team_rolling", "pitcher_form", "park_factors"]
+INTERMEDIATE_TRANSFORMS: list[str] = ["team_rolling", "pitcher_form", "park_factors"]
+FINAL_TRANSFORM = "features"
 
 SILVER_VIEWS = ("games", "team_game_stats", "pitcher_game_stats")
 
@@ -24,11 +25,16 @@ def build_features(
     silver_dir: Path = SILVER_DIR,
     gold_dir: Path = GOLD_DIR,
 ) -> None:
-    """Rebuild all gold feature intermediates from silver parquet."""
+    """Rebuild all gold feature intermediates and the final features table."""
     conn = duckdb.connect()
     _register_silver_views(conn, silver_dir)
-    for name in SQL_TRANSFORMS:
-        _run_sql_transform(conn, name, gold_dir)
+    # Build each intermediate, then register it as a view so the final
+    # assembly can query it by name (features.sql needs team_rolling,
+    # pitcher_form, and park_factors visible in the SQL namespace).
+    for name in INTERMEDIATE_TRANSFORMS:
+        path = _run_sql_transform(conn, name, gold_dir)
+        _register_gold_view(conn, name, path)
+    _run_sql_transform(conn, FINAL_TRANSFORM, gold_dir)
 
 
 def _register_silver_views(
@@ -62,3 +68,12 @@ def _run_sql_transform(
     path = out_dir / f"{table_name}.parquet"
     df.to_parquet(path, index=False)
     return path
+
+
+def _register_gold_view(
+    conn: duckdb.DuckDBPyConnection,
+    name: str,
+    path: Path,
+) -> None:
+    """Expose a freshly-written gold intermediate as a DuckDB view."""
+    conn.execute(f"CREATE OR REPLACE VIEW {name} AS SELECT * FROM read_parquet('{path}')")

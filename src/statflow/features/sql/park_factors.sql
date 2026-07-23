@@ -44,9 +44,11 @@ venue_stats AS (
 SELECT
     vs.game_pk,
     vs.venue_id,
+    fg.game_date,  -- needed for ASOF joins in features.sql
     vs.venue_avg_runs,
     vs.league_avg_runs,
     vs.venue_avg_runs / NULLIF(vs.league_avg_runs, 0) AS venue_park_factor_runs,
     vs.n_prior_venue_games
 FROM venue_stats vs
+JOIN final_games fg ON fg.game_pk = vs.game_pk
 ORDER BY vs.game_pk;

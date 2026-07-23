@@ -32,10 +32,25 @@ def _write_parquet(silver_dir: Path, name: str, df: pd.DataFrame) -> Path:
     return out
 
 
+GAME_DEFAULTS: dict = {
+    "season": 2024,
+    "game_type": "R",
+    "day_night": "night",
+    "home_probable_pitcher_id": pd.NA,
+    "away_probable_pitcher_id": pd.NA,
+    "venue_id": 100,
+}
+
+
 @pytest.fixture
 def write_games(silver_dir: Path) -> Callable[[list[dict]], Path]:
+    """Write silver.games with sensible defaults for feature-layer columns
+    the test doesn't care about. Tests remain focused on the fields they
+    actually exercise."""
+
     def _write(rows: list[dict]) -> Path:
-        return _write_parquet(silver_dir, "games", pd.DataFrame(rows))
+        filled = [{**GAME_DEFAULTS, **row} for row in rows]
+        return _write_parquet(silver_dir, "games", pd.DataFrame(filled))
 
     return _write
 
@@ -60,6 +75,8 @@ _EMPTY_SCHEMAS = {
     "games": {
         "game_pk": "int64",
         "game_date": "object",
+        "season": "int64",
+        "game_type": "object",
         "status": "object",
         "home_team_id": "int64",
         "away_team_id": "int64",
@@ -68,6 +85,9 @@ _EMPTY_SCHEMAS = {
         "total_runs": "int64",
         "home_win": "bool",
         "venue_id": "int64",
+        "day_night": "object",
+        "home_probable_pitcher_id": "Int64",
+        "away_probable_pitcher_id": "Int64",
     },
     "team_game_stats": {
         "game_pk": "int64",

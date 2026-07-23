@@ -28,6 +28,7 @@ WITH starter_appearances AS (
 SELECT
     game_pk,
     pitcher_id,
+    game_date,  -- needed for ASOF joins in features.sql
     -- Cumulative ERA / K/9 over the trailing 5 starts (excluding current).
     -- NULLIF guards divide-by-zero if a pitcher had 5 straight 0.0-IP starts
     -- (extreme edge case, but real — see the 0.0-IP starter bug fix).
