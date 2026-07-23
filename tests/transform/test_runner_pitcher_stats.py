@@ -85,7 +85,7 @@ SAMPLE_BOXSCORE = {
         ("6.0", 6.0),
         ("6.1", pytest.approx(6.333, abs=0.001)),
         ("6.2", pytest.approx(6.667, abs=0.001)),
-        ("0.0", None),
+        ("0.0", 0.0),  # pitcher who faced batters but retired nobody — real
         ("", None),
         (None, None),
     ],
@@ -144,6 +144,37 @@ def test_pitcher_stats_parses_innings_and_stats(
     assert cole["earned_runs"] == 2
     assert cole["strikeouts"] == 8
     assert cole["pitches_thrown"] == 92
+
+
+def test_pitcher_stats_includes_zero_ip_starter(
+    bronze_dir, silver_dir, write_boxscores, write_empty_bronze
+):
+    """A starter who faced batters but retired nobody (IP='0.0') is still a
+    real appearance — filtering on innings would drop the row. Regression test
+    for a bug caught by the silver quality checks on real data."""
+    payload = copy.deepcopy(SAMPLE_BOXSCORE)
+    # Home starter Cole exits immediately: 0.0 IP but he still started.
+    payload["teams"]["home"]["players"]["ID1001"]["stats"]["pitching"] = {
+        "inningsPitched": "0.0",
+        "hits": 1,
+        "runs": 3,
+        "earnedRuns": 3,
+        "baseOnBalls": 2,
+        "strikeOuts": 0,
+        "numberOfPitches": 15,
+    }
+    write_boxscores([{"game_pk": 111, "payload": payload}])
+    for name in ("schedule", "plays", "transactions"):
+        write_empty_bronze(name)
+
+    build_silver(bronze_dir=bronze_dir, silver_dir=silver_dir)
+
+    df = pd.read_parquet(silver_dir / "pitcher_game_stats" / "pitcher_game_stats.parquet")
+    cole = df[df["pitcher_id"] == 1001]
+    assert len(cole) == 1  # not filtered out
+    assert cole.iloc[0]["is_starter"]
+    assert cole.iloc[0]["innings_pitched"] == 0.0
+    assert cole.iloc[0]["pitches_thrown"] == 15
 
 
 def test_pitcher_stats_dedups_across_partitions(

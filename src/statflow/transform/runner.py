@@ -72,8 +72,12 @@ def _parse_innings_pitched(ip: str | None) -> float | None:
 
     It's a common data-engineering gotcha — the field looks like a float but
     behaves like base-3. This helper does the conversion once.
+
+    Note: "0.0" is a real value — a pitcher who faced batters but retired
+    nobody (e.g., a starter pulled after being immediately shelled). It
+    returns 0.0, not None. Only truly missing values return None.
     """
-    if ip in (None, "", "0.0"):
+    if ip in (None, ""):
         return None
     whole, _, thirds = ip.partition(".")
     return int(whole) + (int(thirds) / 3 if thirds else 0.0)
@@ -94,15 +98,19 @@ def _build_pitcher_game_stats(
             team_id = team.get("team", {}).get("id")
             pitchers_used = team.get("pitchers", [])
             starter_id = pitchers_used[0] if pitchers_used else None
+            # A player is a pitcher in this game iff their id appears in the
+            # pitchers[] array. Filtering on innings_pitched would drop
+            # starters who exited immediately (0.0 IP but very much a real
+            # appearance) — data-quality checks caught this on real data.
+            pitcher_ids = set(pitchers_used)
 
             for player in team.get("players", {}).values():
-                pitching = player.get("stats", {}).get("pitching", {})
-                ip = _parse_innings_pitched(pitching.get("inningsPitched"))
-                if ip is None:
-                    continue  # not a pitcher in this game
-
                 person = player.get("person", {})
                 pitcher_id = person.get("id")
+                if pitcher_id not in pitcher_ids:
+                    continue
+
+                pitching = player.get("stats", {}).get("pitching", {})
                 rows.append(
                     {
                         "game_pk": record.game_pk,
@@ -110,7 +118,7 @@ def _build_pitcher_game_stats(
                         "pitcher_id": pitcher_id,
                         "pitcher_name": person.get("fullName"),
                         "is_starter": pitcher_id == starter_id,
-                        "innings_pitched": ip,
+                        "innings_pitched": _parse_innings_pitched(pitching.get("inningsPitched")),
                         "hits_allowed": pitching.get("hits"),
                         "runs_allowed": pitching.get("runs"),
                         "earned_runs": pitching.get("earnedRuns"),
