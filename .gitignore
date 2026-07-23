@@ -21,7 +21,10 @@ htmlcov/
 # Project artifacts (not committed — regenerable)
 data/
 mlruns/
+mlartifacts/
+mlflow.db
 warehouse/
+logs/
 notebooks/.ipynb_checkpoints/
 
 # OS / editors
