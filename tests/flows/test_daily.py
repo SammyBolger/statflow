@@ -27,11 +27,11 @@ def test_daily_pipeline_calls_all_steps_in_order(monkeypatch):
     monkeypatch.setattr("statflow.flows.daily.build_features", _rec("features"))
     monkeypatch.setattr(
         "statflow.flows.daily.predict_for_date",
-        lambda d: (called.append(("predict", (d,))) or None),
+        lambda d: called.append(("predict", (d,))) or None,
     )
     monkeypatch.setattr(
         "statflow.flows.daily.build_prediction_outcomes",
-        lambda: (called.append(("outcomes", ())) or None),
+        lambda: called.append(("outcomes", ())) or None,
     )
 
     daily_pipeline(target_date=date(2026, 7, 27))
