@@ -1,0 +1,55 @@
+# Local demo stack for StatFlow.
+#
+# Two services, one shared image:
+#   - dashboard : Streamlit app at http://localhost:8501
+#   - mlflow    : MLflow tracking UI at http://localhost:5000
+#
+# Both bind-mount ./data and ./mlartifacts from the host, so state persists
+# across restarts and is visible outside the containers.
+#
+# Populate data first with the pipeline (from the host or a one-off container):
+#   uv run python -m statflow.ingest.backfill --start-season 2024 --end-season 2026
+#   uv run python -m statflow.transform
+#   uv run python -m statflow.features
+#   uv run python -m statflow.models train
+#
+# Then:
+#   docker-compose up
+
+services:
+  dashboard:
+    build: .
+    image: statflow:latest
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./mlartifacts:/app/mlartifacts
+    command:
+      - uv
+      - run
+      - streamlit
+      - run
+      - src/statflow/dashboard/app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+
+  mlflow:
+    build: .
+    image: statflow:latest
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./mlartifacts:/app/mlartifacts
+    command:
+      - uv
+      - run
+      - mlflow
+      - ui
+      - --backend-store-uri
+      - sqlite:///mlartifacts/mlflow.db
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5000"

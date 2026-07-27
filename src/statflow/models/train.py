@@ -32,8 +32,10 @@ from statflow.models.metrics import (
     regression_metrics,
 )
 
-MLFLOW_DB_PATH = PROJECT_ROOT / "mlflow.db"
+# Both the tracking DB and artifact files live under one directory so Docker
+# only needs to bind-mount a single path.
 MLFLOW_ARTIFACTS_DIR = PROJECT_ROOT / "mlartifacts"
+MLFLOW_DB_PATH = MLFLOW_ARTIFACTS_DIR / "mlflow.db"
 WINNER_EXPERIMENT = "statflow_winner"
 RUNS_EXPERIMENT = "statflow_runs"
 

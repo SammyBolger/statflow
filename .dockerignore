@@ -1,0 +1,23 @@
+# Anything the container doesn't need — keeps the build context small
+# and prevents host state from leaking into the image.
+.venv/
+data/
+mlartifacts/
+mlruns/
+mlflow.db
+logs/
+notebooks/
+warehouse/
+
+.git/
+.github/
+
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.pyc
+
+.env
+.env.local
+.DS_Store
+tests/
