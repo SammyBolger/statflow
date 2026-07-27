@@ -12,6 +12,7 @@ dependencies = [
     "scikit-learn>=1.5",
     "xgboost>=2.1",
     "mlflow>=2.15",
+    "prefect>=3.0",
 ]
 
 [project.optional-dependencies]

@@ -1,0 +1,53 @@
+name: Daily pipeline
+
+on:
+  schedule:
+    # 11:00 UTC daily = 7am ET, after most MLB games from the prior day
+    # have posted final boxscores. Adjust if you want a different window.
+    - cron: "0 11 * * *"
+  workflow_dispatch:  # allow manual trigger from the Actions tab
+
+jobs:
+  run-daily:
+    runs-on: ubuntu-latest
+    # Only run on the source repo, not on forks (which won't have secrets).
+    if: github.repository == 'SammyBolger/statflow'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      # Fetch the current data/mlflow.db/mlartifacts state cached from the
+      # prior day's run. Falls back gracefully if no cache exists yet
+      # (first run rebuilds from scratch by ingesting today only).
+      - name: Restore pipeline state cache
+        id: cache-state
+        uses: actions/cache@v4
+        with:
+          path: |
+            data
+            mlflow.db
+            mlartifacts
+          key: statflow-pipeline-state-${{ github.run_id }}
+          restore-keys: |
+            statflow-pipeline-state-
+
+      - name: Run daily pipeline
+        run: uv run python -m statflow.flows
+
+      # Save updated state so tomorrow's run inherits today's bronze/silver/gold.
+      - name: Save pipeline state cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            data
+            mlflow.db
+            mlartifacts
+          key: statflow-pipeline-state-${{ github.run_id }}
