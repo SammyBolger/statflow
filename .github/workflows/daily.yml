@@ -59,3 +59,20 @@ jobs:
           path: |
             data/bronze
           key: statflow-bronze-${{ github.run_id }}
+
+      # Optional Slack notification on failure. No-op if the secret isn't set,
+      # so you can wire this up whenever without a workflow change:
+      #   1. In Slack: Apps -> Incoming Webhooks -> Add to workspace
+      #   2. Copy the webhook URL
+      #   3. Add as GH repo secret SLACK_WEBHOOK_URL
+      - name: Notify Slack on failure
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            curl -sS -X POST -H 'Content-Type: application/json' \
+              --data "{\"text\":\":x: statflow *daily pipeline* failed — <${RUN_URL}|view logs>\"}" \
+              "$SLACK_WEBHOOK_URL"
+          fi
