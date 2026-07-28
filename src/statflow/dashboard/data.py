@@ -54,6 +54,52 @@ def load_prediction_outcomes(gold_dir: Path = GOLD_DIR) -> pd.DataFrame:
     return pd.read_parquet(path)
 
 
+def load_features_for_games(
+    game_pks: list[int],
+    gold_dir: Path = GOLD_DIR,
+) -> pd.DataFrame:
+    """Return the gold feature rows for a list of game_pks, indexed by game_pk.
+
+    Used by the dashboard's per-game explanation panel — we need the exact
+    feature values the model saw to compute SHAP contributions.
+    """
+    path = gold_dir / "features" / "features.parquet"
+    if not path.exists() or not game_pks:
+        return pd.DataFrame()
+    df = pd.read_parquet(path)
+    return df[df["game_pk"].isin(game_pks)].set_index("game_pk", drop=False)
+
+
+def load_historical_predictions(
+    silver_dir: Path = SILVER_DIR,
+    gold_dir: Path = GOLD_DIR,
+) -> pd.DataFrame:
+    """Join prediction_outcomes with silver.games for a browsable history.
+
+    Adds team names + actual scores so the historical explorer tab can
+    filter by team and display readable rows without further joins.
+    """
+    outcomes_path = gold_dir / "prediction_outcomes" / "prediction_outcomes.parquet"
+    games_path = silver_dir / "games" / "games.parquet"
+    if not outcomes_path.exists() or not games_path.exists():
+        return pd.DataFrame()
+
+    outcomes = pd.read_parquet(outcomes_path)
+    games = pd.read_parquet(games_path)[
+        [
+            "game_pk",
+            "home_team_name",
+            "away_team_name",
+            "home_score",
+            "away_score",
+            "status",
+        ]
+    ]
+    merged = outcomes.merge(games, on="game_pk", how="left")
+    merged["game_date"] = pd.to_datetime(merged["game_date"]).dt.date
+    return merged.sort_values("game_date", ascending=False).reset_index(drop=True)
+
+
 def rolling_performance(outcomes: pd.DataFrame, window_days: int = 30) -> dict:
     """Recent per-model summary metrics over the last `window_days`.
 

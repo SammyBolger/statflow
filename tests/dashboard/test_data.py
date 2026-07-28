@@ -255,3 +255,78 @@ def test_daily_metrics_trend_aggregates_by_day():
     assert df.iloc[0]["accuracy"] == pytest.approx(0.5)
     assert df.iloc[1]["accuracy"] == 1.0
     assert "accuracy_rolling" in df.columns
+
+
+def test_load_features_for_games_returns_indexed_frame(tmp_path):
+    from statflow.dashboard.data import load_features_for_games
+
+    gold = tmp_path / "gold"
+    features_dir = gold / "features"
+    features_dir.mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "game_pk": [111, 222, 333],
+            "home_runs_scored_l10": [3.0, 4.0, 5.0],
+        }
+    ).to_parquet(features_dir / "features.parquet", index=False)
+
+    df = load_features_for_games([111, 333], gold_dir=gold)
+    assert list(df["game_pk"]) == [111, 333]
+
+
+def test_load_features_for_games_empty_when_no_pks(tmp_path):
+    from statflow.dashboard.data import load_features_for_games
+
+    assert load_features_for_games([], gold_dir=tmp_path).empty
+
+
+def test_load_features_for_games_missing_file(tmp_path):
+    from statflow.dashboard.data import load_features_for_games
+
+    assert load_features_for_games([111], gold_dir=tmp_path).empty
+
+
+def test_load_historical_predictions_joins_teams(tmp_path):
+    from statflow.dashboard.data import load_historical_predictions
+
+    silver = tmp_path / "silver"
+    gold = tmp_path / "gold"
+    (silver / "games").mkdir(parents=True)
+    (gold / "prediction_outcomes").mkdir(parents=True)
+
+    pd.DataFrame(
+        {
+            "game_pk": [111],
+            "home_team_name": ["Yankees"],
+            "away_team_name": ["Pirates"],
+            "home_score": [5],
+            "away_score": [3],
+            "status": ["Final"],
+        }
+    ).to_parquet(silver / "games" / "games.parquet", index=False)
+    pd.DataFrame(
+        {
+            "game_pk": [111],
+            "game_date": [pd.Timestamp("2026-07-27")],
+            "predicted_home_win_prob": [0.65],
+            "predicted_total_runs": [8.2],
+            "actual_home_win": [1],
+            "actual_total_runs": [8],
+            "winner_correct": [True],
+            "winner_log_loss": [0.43],
+            "winner_brier": [0.12],
+            "runs_abs_error": [0.2],
+            "runs_squared_error": [0.04],
+            "winner_model_run_id": ["abc"],
+            "runs_model_run_id": ["abc"],
+            "predicted_at": [pd.Timestamp("2026-07-27T12:00:00Z")],
+        }
+    ).to_parquet(gold / "prediction_outcomes" / "prediction_outcomes.parquet", index=False)
+
+    df = load_historical_predictions(silver_dir=silver, gold_dir=gold)
+    assert len(df) == 1
+    row = df.iloc[0]
+    assert row["home_team_name"] == "Yankees"
+    assert row["away_team_name"] == "Pirates"
+    assert row["home_score"] == 5
+    assert row["actual_home_win"] == 1

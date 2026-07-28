@@ -23,11 +23,15 @@ from statflow.dashboard.data import (
     calibration_bins,
     confidence_tier_breakdown,
     daily_metrics_trend,
+    load_features_for_games,
+    load_historical_predictions,
     load_prediction_outcomes,
     load_todays_games,
     rolling_performance,
     runs_scatter_data,
 )
+from statflow.models.data import FEATURE_COLS
+from statflow.models.explanations import top_contributions
 
 
 @st.cache_resource
@@ -108,7 +112,46 @@ def _cached_outcomes() -> pd.DataFrame:
     return load_prediction_outcomes()
 
 
-tab_today, tab_perf = st.tabs(["Today's games", "Model performance"])
+@st.cache_data(ttl=300)
+def _cached_history() -> pd.DataFrame:
+    return load_historical_predictions()
+
+
+@st.cache_resource
+def _cached_winner_model():
+    """Load the latest XGBoost winner model from MLflow, once per app process.
+
+    Returns (model, run_id) or (None, None) if MLflow isn't yet populated
+    (e.g., first-ever run on a fresh bucket). The Today's-games explain
+    panel just hides itself if this returns None.
+    """
+    try:
+        from statflow.models.predict import load_latest_winner_model
+
+        return load_latest_winner_model()
+    except Exception:
+        return None, None
+
+
+def _explanations_for(game_pks: list[int]) -> dict[int, list[tuple[str, float]]]:
+    """Return {game_pk: [(feature, contribution), ...]} for today's games."""
+    if not game_pks:
+        return {}
+    model, _ = _cached_winner_model()
+    if model is None:
+        return {}
+    features = load_features_for_games(game_pks)
+    if features.empty:
+        return {}
+    ordered_pks = [pk for pk in game_pks if pk in features.index]
+    X = features.loc[ordered_pks, FEATURE_COLS]
+    contribs = top_contributions(model, X, FEATURE_COLS, top_n=5)
+    return dict(zip(ordered_pks, contribs, strict=True))
+
+
+tab_today, tab_perf, tab_history = st.tabs(
+    ["Today's games", "Model performance", "Historical explorer"]
+)
 
 # ---------------------------------------------------------------------------
 # Today's games
@@ -121,6 +164,7 @@ with tab_today:
         st.info("No games on this date, or silver hasn't been built yet.")
     else:
         st.caption(f"{len(games)} games")
+        explanations = _explanations_for(list(games["game_pk"]))
         for _, row in games.iterrows():
             with st.container(border=True):
                 cols = st.columns([4, 3, 1, 1])
@@ -173,6 +217,25 @@ with tab_today:
                             row["home_score"],
                         )
                     cols[0].caption(f"Final: **{winner}** won {w_score}–{l_score}")
+
+                # Per-game explanation — top 5 features that drove the prediction.
+                # SHAP-equivalent values from XGBoost's pred_contribs, in log-odds space.
+                pk = int(row["game_pk"])
+                if pk in explanations:
+                    with st.expander("Why?  Top 5 features driving this prediction"):
+                        st.caption(
+                            "Positive contributions pushed the model toward "
+                            "**home win**; negative pushed it toward **away**. "
+                            "Values are in log-odds — magnitudes are comparable across features."
+                        )
+                        contrib_df = pd.DataFrame(
+                            explanations[pk], columns=["feature", "contribution"]
+                        )
+                        contrib_df["direction"] = contrib_df["contribution"].apply(
+                            lambda v: "↑ home" if v > 0 else "↓ away"
+                        )
+                        contrib_df["contribution"] = contrib_df["contribution"].round(3)
+                        st.dataframe(contrib_df, hide_index=True, use_container_width=False)
 
 # ---------------------------------------------------------------------------
 # Model performance
@@ -387,3 +450,89 @@ with tab_perf:
                 .encode(x="x:Q", y="y:Q")
             )
             st.altair_chart(points + diag, use_container_width=True)
+
+
+# ---------------------------------------------------------------------------
+# Historical explorer
+# ---------------------------------------------------------------------------
+with tab_history:
+    history = _cached_history()
+    if history.empty:
+        st.info(
+            "No historical predictions yet — this tab populates as the daily "
+            "flow runs and games complete."
+        )
+    else:
+        st.caption(
+            "Every prediction the model has ever made on a game that has "
+            "since finished. Filter by date range or team, sort by biggest miss."
+        )
+
+        min_date = history["game_date"].min()
+        max_date = history["game_date"].max()
+        col_a, col_b = st.columns([2, 3])
+        date_range = col_a.date_input(
+            "Date range", value=(min_date, max_date), min_value=min_date, max_value=max_date
+        )
+        all_teams = sorted(
+            set(history["home_team_name"].dropna()) | set(history["away_team_name"].dropna())
+        )
+        selected_teams = col_b.multiselect("Teams (leave empty for all)", options=all_teams)
+
+        filtered = history.copy()
+        if isinstance(date_range, tuple) and len(date_range) == 2:
+            start, end = date_range
+            filtered = filtered[(filtered["game_date"] >= start) & (filtered["game_date"] <= end)]
+        if selected_teams:
+            filtered = filtered[
+                filtered["home_team_name"].isin(selected_teams)
+                | filtered["away_team_name"].isin(selected_teams)
+            ]
+
+        st.caption(f"{len(filtered):,} matching games")
+
+        display = filtered.copy()
+        display["matchup"] = display["away_team_name"] + " @ " + display["home_team_name"]
+        display["score"] = (
+            display["away_score"].astype("Int64").astype(str)
+            + "–"
+            + display["home_score"].astype("Int64").astype(str)
+        )
+        display["home_win_prob"] = (display["predicted_home_win_prob"] * 100).round(1).astype(
+            str
+        ) + "%"
+        display["actual"] = display["actual_home_win"].map({1: "home won", 0: "away won"})
+        display["pred_runs"] = display["predicted_total_runs"].round(1)
+        display["actual_runs"] = display["actual_total_runs"]
+        display["runs_error"] = display["runs_abs_error"].round(2)
+        display["hit"] = display["winner_correct"].map({True: "✓", False: "✗"})
+
+        st.dataframe(
+            display[
+                [
+                    "game_date",
+                    "matchup",
+                    "home_win_prob",
+                    "actual",
+                    "hit",
+                    "pred_runs",
+                    "actual_runs",
+                    "runs_error",
+                    "score",
+                ]
+            ].rename(
+                columns={
+                    "game_date": "Date",
+                    "matchup": "Matchup (away @ home)",
+                    "home_win_prob": "Home win prob",
+                    "actual": "Actual",
+                    "hit": "Correct?",
+                    "pred_runs": "Predicted runs",
+                    "actual_runs": "Actual runs",
+                    "runs_error": "|error|",
+                    "score": "Final",
+                }
+            ),
+            hide_index=True,
+            use_container_width=True,
+        )
