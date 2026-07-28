@@ -1,0 +1,52 @@
+name: Weekly retrain
+
+on:
+  schedule:
+    # 12:00 UTC every Sunday = 8am ET. Runs *after* the morning daily flow
+    # (11:00 UTC) so the training data is as fresh as possible for the week.
+    - cron: "0 12 * * 0"
+  workflow_dispatch:  # manual trigger from the Actions tab
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    if: github.repository == 'SammyBolger/statflow'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      # Restore accumulated pipeline state (bronze/silver/gold + mlartifacts)
+      # from the same cache pool as daily.yml — so retraining sees the latest
+      # gold features and gets appended into the same MLflow DB.
+      - name: Restore pipeline state cache
+        id: cache-state
+        uses: actions/cache@v4
+        with:
+          path: |
+            data
+            mlartifacts
+          key: statflow-pipeline-state-${{ github.run_id }}
+          restore-keys: |
+            statflow-pipeline-state-
+
+      - name: Retrain models
+        # Creates fresh XGBoost runs in mlartifacts/mlflow.db. Next daily
+        # flow's predict step calls mlflow.search_runs(...order_by=start_time DESC)
+        # and automatically picks these up — no manual model-swap needed.
+        run: uv run python -m statflow.models train
+
+      - name: Save pipeline state cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            data
+            mlartifacts
+          key: statflow-pipeline-state-${{ github.run_id }}

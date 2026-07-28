@@ -10,10 +10,12 @@ import pandas as pd
 import pytest
 
 from statflow.dashboard.data import (
+    baseline_comparison,
     calibration_bins,
     load_prediction_outcomes,
     load_todays_games,
     rolling_performance,
+    runs_scatter_data,
 )
 
 
@@ -155,6 +157,47 @@ def test_calibration_bins_perfect_calibration():
 
     bins = calibration_bins(outcomes, n_bins=10)
     assert len(bins) <= 10
-    # For a perfectly-calibrated model, mean_predicted ≈ mean_actual per bin.
     diffs = (bins["mean_predicted"] - bins["mean_actual"]).abs()
-    assert diffs.max() < 0.1  # loose tolerance for finite sample size
+    assert diffs.max() < 0.1
+
+
+def test_baseline_comparison_empty_input():
+    assert baseline_comparison(pd.DataFrame()).empty
+
+
+def test_baseline_comparison_shape_and_metric_names():
+    outcomes = pd.DataFrame(
+        {
+            "actual_home_win": [1, 1, 0, 0, 1],
+            "actual_total_runs": [8, 10, 6, 4, 12],
+            "winner_correct": [True, True, False, False, True],
+            "winner_log_loss": [0.4, 0.3, 0.9, 0.7, 0.5],
+            "winner_brier": [0.1, 0.09, 0.2, 0.15, 0.12],
+            "runs_abs_error": [1.0, 2.0, 3.0, 1.5, 2.5],
+            "runs_squared_error": [1.0, 4.0, 9.0, 2.25, 6.25],
+        }
+    )
+    compare = baseline_comparison(outcomes)
+    assert list(compare["metric"]) == ["Accuracy", "Log loss", "Brier", "MAE (runs)", "RMSE (runs)"]
+    assert compare["model"].notna().all()
+    assert compare["baseline"].notna().all()
+
+
+def test_runs_scatter_data_empty_input():
+    df = runs_scatter_data(pd.DataFrame())
+    assert list(df.columns) == ["game_pk", "predicted_total_runs", "actual_total_runs"]
+    assert df.empty
+
+
+def test_runs_scatter_data_returns_expected_columns():
+    outcomes = pd.DataFrame(
+        {
+            "game_pk": [1, 2, 3],
+            "predicted_total_runs": [8.0, 9.5, 7.2],
+            "actual_total_runs": [7, 12, 6],
+            "some_other_col": [None, None, None],
+        }
+    )
+    df = runs_scatter_data(outcomes)
+    assert list(df.columns) == ["game_pk", "predicted_total_runs", "actual_total_runs"]
+    assert len(df) == 3

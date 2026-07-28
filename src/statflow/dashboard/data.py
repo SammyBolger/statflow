@@ -75,6 +75,58 @@ def rolling_performance(outcomes: pd.DataFrame, window_days: int = 30) -> dict:
     }
 
 
+def baseline_comparison(outcomes: pd.DataFrame) -> pd.DataFrame:
+    """Model vs naive-baseline metrics computed on the same completed games.
+
+    Baselines are recomputed on the actuals themselves — "if we had always
+    predicted the mean home-win rate / mean total runs, how would we have
+    done?" — so this always reflects the current data, not a snapshot from
+    training.
+    """
+    if outcomes.empty:
+        return pd.DataFrame()
+
+    import numpy as np
+
+    actuals = outcomes["actual_home_win"].astype(int).to_numpy()
+    actual_runs = outcomes["actual_total_runs"].to_numpy(dtype=float)
+
+    # Naive baselines: predict the mean every time.
+    p = float(outcomes["actual_home_win"].mean())
+    mean_runs = float(outcomes["actual_total_runs"].mean())
+    p_clip = min(max(p, 1e-15), 1 - 1e-15)
+    baseline_accuracy = float((int(p_clip >= 0.5) == actuals).mean())
+    baseline_log_loss = float(
+        -(actuals * np.log(p_clip) + (1 - actuals) * np.log(1 - p_clip)).mean()
+    )
+    baseline_brier = float(((p - actuals) ** 2).mean())
+    baseline_mae = float(np.abs(mean_runs - actual_runs).mean())
+    baseline_rmse = float(np.sqrt(((mean_runs - actual_runs) ** 2).mean()))
+
+    model_accuracy = float(outcomes["winner_correct"].mean())
+    model_log_loss = float(outcomes["winner_log_loss"].mean())
+    model_brier = float(outcomes["winner_brier"].mean())
+    model_mae = float(outcomes["runs_abs_error"].mean())
+    model_rmse = float(np.sqrt(outcomes["runs_squared_error"].mean()))
+
+    return pd.DataFrame(
+        [
+            {"metric": "Accuracy", "model": model_accuracy, "baseline": baseline_accuracy},
+            {"metric": "Log loss", "model": model_log_loss, "baseline": baseline_log_loss},
+            {"metric": "Brier", "model": model_brier, "baseline": baseline_brier},
+            {"metric": "MAE (runs)", "model": model_mae, "baseline": baseline_mae},
+            {"metric": "RMSE (runs)", "model": model_rmse, "baseline": baseline_rmse},
+        ]
+    )
+
+
+def runs_scatter_data(outcomes: pd.DataFrame) -> pd.DataFrame:
+    """One row per completed game: predicted vs actual total runs."""
+    if outcomes.empty:
+        return pd.DataFrame(columns=["game_pk", "predicted_total_runs", "actual_total_runs"])
+    return outcomes[["game_pk", "predicted_total_runs", "actual_total_runs"]].copy()
+
+
 def calibration_bins(outcomes: pd.DataFrame, n_bins: int = 10) -> pd.DataFrame:
     """Bin predicted probabilities and compute the actual home-win rate per bin.
 
