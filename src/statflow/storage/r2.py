@@ -130,12 +130,23 @@ def _rewrite_mlflow_artifact_paths(root: Path) -> None:
     new_prefix = str(root)
     pattern = re.compile(r"^(.*?)/(mlartifacts|mlruns)(/.*|$)")
 
+    # MLflow 3 splits absolute paths across several tables. All of these
+    # need the same rewrite; MLflow otherwise can't find the model files.
+    targets = [
+        ("experiments", "artifact_location"),
+        ("runs", "artifact_uri"),
+        ("logged_models", "artifact_location"),
+        ("model_versions", "storage_location"),
+    ]
+
     conn = sqlite3.connect(db_path)
     try:
-        for table, col in [
-            ("experiments", "artifact_location"),
-            ("runs", "artifact_uri"),
-        ]:
+        existing_tables = {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        for table, col in targets:
+            if table not in existing_tables:
+                continue  # older MLflow schema without this table
             rows = list(conn.execute(f"SELECT rowid, {col} FROM {table}"))
             for rowid, path in rows:
                 if not path:
