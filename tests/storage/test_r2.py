@@ -97,3 +97,36 @@ def test_pull_handles_empty_bucket_gracefully(tmp_path):
     n = r2.pull(paths=("data/silver",), root=tmp_path, client=client)
     assert n == 0
     client.download_file.assert_not_called()
+
+
+def test_pull_rewrites_mlflow_paths_to_current_root(tmp_path):
+    """MLflow stores absolute artifact paths — after downloading a DB from
+    another machine, we must rewrite them to point at the current root."""
+    import sqlite3
+
+    # Build a minimal MLflow-shaped DB with paths from a "different machine".
+    db_path = tmp_path / "mlartifacts" / "mlflow.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE experiments (artifact_location TEXT)")
+    conn.execute("CREATE TABLE runs (artifact_uri TEXT)")
+    original = "/Users/original/Desktop/statflow"
+    conn.execute(f"INSERT INTO experiments VALUES ('{original}/mlartifacts/statflow_winner')")
+    conn.execute(
+        f"INSERT INTO runs VALUES ('{original}/mlartifacts/statflow_winner/abc123/artifacts')"
+    )
+    conn.commit()
+    conn.close()
+
+    # Simulate a pull that already wrote the DB — we just need the rewrite step.
+    client = MagicMock()
+    client.get_paginator.return_value.paginate.return_value = [{"Contents": []}]
+    r2.pull(paths=("mlartifacts",), root=tmp_path, client=client)
+
+    # DB paths now point at tmp_path.
+    conn = sqlite3.connect(db_path)
+    exp_path = conn.execute("SELECT artifact_location FROM experiments").fetchone()[0]
+    run_path = conn.execute("SELECT artifact_uri FROM runs").fetchone()[0]
+    conn.close()
+    assert exp_path == f"{tmp_path}/mlartifacts/statflow_winner"
+    assert run_path == f"{tmp_path}/mlartifacts/statflow_winner/abc123/artifacts"

@@ -1,5 +1,10 @@
 """Sync silver / gold / mlartifacts between the local project tree and R2.
 
+The `pull()` helper also rewrites MLflow's SQLite DB after downloading, so
+artifact paths (which MLflow always stores as absolute) resolve on the
+current machine — otherwise a DB uploaded from a laptop wouldn't work on
+a GH Actions runner and vice versa.
+
 R2 is Cloudflare's S3-compatible object storage — we use it as the persistent
 source of truth so multiple workflows (daily flow, weekly retrain) and the
 hosted dashboard all see the same state.
@@ -23,6 +28,8 @@ Or from the shell:
 from __future__ import annotations
 
 import os
+import re
+import sqlite3
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -85,7 +92,12 @@ def pull(
     root: Path = PROJECT_ROOT,
     client=None,
 ) -> int:
-    """Download every object under each path prefix from R2 to the local tree."""
+    """Download every object under each path prefix from R2 to the local tree.
+
+    After downloading, rewrite MLflow's DB so artifact paths point at the
+    current machine's project root — MLflow stores absolute paths, so any
+    DB moved between machines has otherwise-broken artifact URIs.
+    """
     s3 = client or _client()
     bucket = _bucket()
     n = 0
@@ -98,4 +110,45 @@ def pull(
                 local.parent.mkdir(parents=True, exist_ok=True)
                 s3.download_file(bucket, key, str(local))
                 n += 1
+
+    _rewrite_mlflow_artifact_paths(root)
     return n
+
+
+def _rewrite_mlflow_artifact_paths(root: Path) -> None:
+    """Point MLflow's artifact paths at the current project root.
+
+    MLflow always stores absolute paths for artifact_location (per experiment)
+    and artifact_uri (per run). When a DB moves between machines, those paths
+    are stale. We find the `mlartifacts/...` or `mlruns/...` segment inside
+    each stored path and re-prefix it with the current project root.
+    """
+    db_path = root / "mlartifacts" / "mlflow.db"
+    if not db_path.exists():
+        return
+
+    new_prefix = str(root)
+    pattern = re.compile(r"^(.*?)/(mlartifacts|mlruns)(/.*|$)")
+
+    conn = sqlite3.connect(db_path)
+    try:
+        for table, col in [
+            ("experiments", "artifact_location"),
+            ("runs", "artifact_uri"),
+        ]:
+            rows = list(conn.execute(f"SELECT rowid, {col} FROM {table}"))
+            for rowid, path in rows:
+                if not path:
+                    continue
+                m = pattern.match(path)
+                if not m:
+                    continue
+                new_path = f"{new_prefix}/{m.group(2)}{m.group(3)}"
+                if new_path != path:
+                    conn.execute(
+                        f"UPDATE {table} SET {col} = ? WHERE rowid = ?",
+                        (new_path, rowid),
+                    )
+        conn.commit()
+    finally:
+        conn.close()

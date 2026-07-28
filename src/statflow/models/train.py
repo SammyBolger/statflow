@@ -53,7 +53,10 @@ def _init_mlflow(experiment_name: str) -> None:
     if mlflow.get_experiment_by_name(experiment_name) is None:
         mlflow.create_experiment(
             experiment_name,
-            artifact_location=str(MLFLOW_ARTIFACTS_DIR / experiment_name),
+            # Relative path so the SQLite DB roundtrips across machines
+            # (local dev, GH Actions runner). MLflow resolves this against
+            # the CWD, which is always the project root when using our CLIs.
+            artifact_location=f"mlartifacts/{experiment_name}",
         )
     mlflow.set_experiment(experiment_name)
 
