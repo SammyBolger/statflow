@@ -13,8 +13,22 @@ import pandas as pd
 
 
 def xgb_feature_importance(model, feature_names: list[str]) -> pd.DataFrame:
-    """Return a sorted (feature, importance) DataFrame from an XGBoost model."""
-    importances = model.feature_importances_
+    """Return a sorted (feature, importance) DataFrame from an XGBoost model.
+
+    Accepts either a plain XGBClassifier/XGBRegressor or a sklearn-wrapped
+    variant (e.g., CalibratedClassifierCV) — importance always comes from
+    the underlying XGBoost booster.
+    """
+    from statflow.models.explanations import _extract_xgb_booster
+
+    if hasattr(model, "feature_importances_"):
+        importances = model.feature_importances_
+    else:
+        booster = _extract_xgb_booster(model)
+        # Gain-based importance, aligned to our feature_names order
+        score = booster.get_score(importance_type="gain")
+        importances = [score.get(f, 0.0) for f in feature_names]
+
     df = pd.DataFrame({"feature": feature_names, "importance": importances})
     return df.sort_values("importance", ascending=False).reset_index(drop=True)
 

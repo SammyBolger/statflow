@@ -12,6 +12,23 @@ import numpy as np
 import pandas as pd
 
 
+def _extract_xgb_booster(model):
+    """Get the underlying XGBoost Booster regardless of sklearn wrappers.
+
+    The winner model is `CalibratedClassifierCV(FrozenEstimator(XGBClassifier))`
+    once the promotion gate + isotonic calibration are in place; older runs
+    are a plain XGBClassifier. Both paths supported.
+    """
+    if hasattr(model, "calibrated_classifiers_"):
+        inner = model.calibrated_classifiers_[0].estimator
+        while hasattr(inner, "estimator") and not hasattr(inner, "get_booster"):
+            inner = inner.estimator
+        return inner.get_booster()
+    if hasattr(model, "get_booster"):
+        return model.get_booster()
+    raise AttributeError(f"cannot extract XGBoost booster from {type(model).__name__}")
+
+
 def top_contributions(
     model,
     X: pd.DataFrame,
@@ -24,9 +41,7 @@ def top_contributions(
     native units (regressor). Positive = pushed the prediction up; negative =
     pushed it down.
     """
-    # XGBoost's native SHAP-equivalent: shape (n_samples, n_features + 1).
-    # Last column is the base/bias term — drop it.
-    booster = getattr(model, "get_booster", lambda: model)()
+    booster = _extract_xgb_booster(model)
     import xgboost as xgb
 
     dmatrix = xgb.DMatrix(X, feature_names=feature_names)

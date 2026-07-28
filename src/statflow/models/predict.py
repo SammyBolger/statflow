@@ -28,39 +28,63 @@ from statflow.models.train import RUNS_EXPERIMENT, WINNER_EXPERIMENT, _init_mlfl
 
 
 def _latest_run_id(experiment_name: str, model_family_tag: str) -> str:
-    """Return the most recent MLflow run id for a given experiment + model tag."""
+    """Return the run id predict.py should serve for a given experiment.
+
+    Preference order:
+      1. Latest run tagged `promoted=true` (the promotion-gate winner).
+      2. Latest run for the model_family, if no promoted tag exists yet
+         (backfill for pre-promotion-gate runs).
+    """
     exp = mlflow.get_experiment_by_name(experiment_name)
     if exp is None:
         raise RuntimeError(f"MLflow experiment not found: {experiment_name}")
-    runs = mlflow.search_runs(
+
+    promoted = mlflow.search_runs(
+        experiment_ids=[exp.experiment_id],
+        filter_string=(f"tags.model_family = '{model_family_tag}' AND tags.promoted = 'true'"),
+        order_by=["start_time DESC"],
+        max_results=1,
+    )
+    if not promoted.empty:
+        return str(promoted.iloc[0]["run_id"])
+
+    any_run = mlflow.search_runs(
         experiment_ids=[exp.experiment_id],
         filter_string=f"tags.model_family = '{model_family_tag}'",
         order_by=["start_time DESC"],
         max_results=1,
     )
-    if runs.empty:
+    if any_run.empty:
         raise RuntimeError(
             f"No MLflow runs found for experiment={experiment_name} "
             f"model_family={model_family_tag}. Train first with "
             f"`python -m statflow.models train`."
         )
-    return str(runs.iloc[0]["run_id"])
+    return str(any_run.iloc[0]["run_id"])
+
+
+def _load_model_any_flavor(run_id: str) -> object:
+    """Load a run's model artifact regardless of whether it was logged via
+    mlflow.xgboost (older runs) or mlflow.sklearn (calibrated post-gate)."""
+    uri = f"runs:/{run_id}/model"
+    try:
+        return mlflow.sklearn.load_model(uri)
+    except Exception:
+        return mlflow.xgboost.load_model(uri)
 
 
 def load_latest_winner_model() -> tuple[object, str]:
-    """Load the most recent XGBoost winner model + its run id."""
+    """Load the model predict.py should serve for the winner target."""
     _init_mlflow(WINNER_EXPERIMENT)
     run_id = _latest_run_id(WINNER_EXPERIMENT, "xgboost")
-    model = mlflow.xgboost.load_model(f"runs:/{run_id}/model")
-    return model, run_id
+    return _load_model_any_flavor(run_id), run_id
 
 
 def load_latest_runs_model() -> tuple[object, str]:
-    """Load the most recent XGBoost runs regressor + its run id."""
+    """Load the model predict.py should serve for the total-runs target."""
     _init_mlflow(RUNS_EXPERIMENT)
     run_id = _latest_run_id(RUNS_EXPERIMENT, "xgboost")
-    model = mlflow.xgboost.load_model(f"runs:/{run_id}/model")
-    return model, run_id
+    return _load_model_any_flavor(run_id), run_id
 
 
 def predict_for_date(

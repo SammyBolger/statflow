@@ -17,6 +17,8 @@ from typing import Any
 import mlflow
 import mlflow.sklearn
 import mlflow.xgboost
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.frozen import FrozenEstimator
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.pipeline import Pipeline
@@ -102,6 +104,52 @@ def _log_metrics(metrics: dict[str, Any]) -> None:
     for split_name, m in metrics.items():
         for k, v in m.as_dict().items():
             mlflow.log_metric(f"{split_name}_{k}", v)
+
+
+def _current_promoted_metric(experiment_name: str, metric_name: str) -> float | None:
+    """Return the metric value of the currently-promoted XGBoost run, or None.
+
+    Used by the promotion gate: only tag a new run as `promoted=true` if its
+    metric beats the incumbent's. If no promoted run exists (first ever),
+    the new one gets promoted unconditionally.
+    """
+    exp = mlflow.get_experiment_by_name(experiment_name)
+    if exp is None:
+        return None
+    runs = mlflow.search_runs(
+        experiment_ids=[exp.experiment_id],
+        filter_string="tags.promoted = 'true' AND tags.model_family = 'xgboost'",
+        order_by=["start_time DESC"],
+        max_results=1,
+    )
+    if runs.empty:
+        return None
+    col = f"metrics.{metric_name}"
+    val = runs.iloc[0].get(col)
+    try:
+        return float(val) if val is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _apply_promotion_gate(
+    experiment_name: str,
+    metric_name: str,
+    new_value: float,
+    lower_is_better: bool,
+) -> bool:
+    """Set the `promoted` tag on the active run based on comparison to
+    the previously-promoted run. Returns whether we promoted."""
+    current = _current_promoted_metric(experiment_name, metric_name)
+    if current is None:
+        promoted = True  # first run — promote unconditionally
+    elif lower_is_better:
+        promoted = new_value < current
+    else:
+        promoted = new_value > current
+    mlflow.set_tag("promoted", "true" if promoted else "false")
+    mlflow.log_metric("promoted", 1.0 if promoted else 0.0)
+    return promoted
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +244,13 @@ def train_xgb_regressor(
         _log_metrics(metrics)
         mlflow.xgboost.log_model(model, name="model")
 
-        # Persist a diff-friendly markdown card of this run for the repo.
+        # Regression has no calibration analog, but the promotion gate still
+        # applies: don't overwrite the incumbent with a worse-MAE model.
+        if "val" in metrics:
+            _apply_promotion_gate(
+                RUNS_EXPERIMENT, "val_mae", metrics["val"].mae, lower_is_better=True
+            )
+
         from statflow.models.model_card import write_model_card
 
         write_model_card(active_run.info.run_id, RUNS_EXPERIMENT, "xgboost")
@@ -253,11 +307,40 @@ def train_xgb_classifier(
         mlflow.log_params(params)
         mlflow.set_tag("model_family", "xgboost")
 
-        model = XGBClassifier(**params)
-        model, metrics = fit_and_evaluate_classifier(model, split)
+        # 1. Train raw XGBoost on the training split.
+        X_tr, y_tr = make_classification_xy(split.train)
+        raw = XGBClassifier(**params)
+        raw.fit(X_tr, y_tr)
 
+        # 2. Fit a sigmoid (Platt) calibrator on the val split. Sigmoid is
+        # a smooth 2-parameter fit — good when val is modest (~2.5k games);
+        # isotonic is more flexible but needs more data or it produces very
+        # blocky step-function outputs. FrozenEstimator prevents
+        # CalibratedClassifierCV from re-fitting the base tree model.
+        X_val, y_val = make_classification_xy(split.val)
+        model = CalibratedClassifierCV(FrozenEstimator(raw), method="sigmoid")
+        model.fit(X_val, y_val)
+
+        # 3. Evaluate the CALIBRATED model on all three splits — this is
+        # what serve-time will use, so it's what should be measured.
+        metrics: dict[str, ClassificationMetrics] = {}
+        for name, part in [("train", split.train), ("val", split.val), ("test", split.test)]:
+            if len(part) == 0:
+                continue
+            X, y = make_classification_xy(part)
+            y_prob = model.predict_proba(X)[:, 1]
+            metrics[name] = classification_metrics(y, y_prob)
         _log_metrics(metrics)
-        mlflow.xgboost.log_model(model, name="model")
+
+        # 4. Log the model (sklearn wrapper) — predict.py loads it.
+        mlflow.sklearn.log_model(model, name="model", serialization_format="cloudpickle")
+
+        # 5. Promotion gate: only mark this run as the "one predict.py
+        # picks up" if it beats the previously-promoted run on val log_loss.
+        if "val" in metrics:
+            _apply_promotion_gate(
+                WINNER_EXPERIMENT, "val_log_loss", metrics["val"].log_loss, lower_is_better=True
+            )
 
         from statflow.models.model_card import write_model_card
 
