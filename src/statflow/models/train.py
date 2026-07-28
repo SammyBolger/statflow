@@ -17,8 +17,6 @@ from typing import Any
 import mlflow
 import mlflow.sklearn
 import mlflow.xgboost
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.frozen import FrozenEstimator
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.pipeline import Pipeline
@@ -308,21 +306,17 @@ def train_xgb_classifier(
         mlflow.set_tag("model_family", "xgboost")
 
         # 1. Train raw XGBoost on the training split.
+        # Calibration wrappers (isotonic / sigmoid) were tried and removed —
+        # on our modest val split (~2.5k games) both collapsed the output into
+        # a handful of near-constant probabilities, which killed the dashboard's
+        # per-game display without meaningfully improving log-loss over raw
+        # tree scores. Raw XGBoost's outputs are already reasonable — we can
+        # revisit calibration when we have 10k+ val games or a real drift issue.
         X_tr, y_tr = make_classification_xy(split.train)
-        raw = XGBClassifier(**params)
-        raw.fit(X_tr, y_tr)
+        model = XGBClassifier(**params)
+        model.fit(X_tr, y_tr)
 
-        # 2. Fit a sigmoid (Platt) calibrator on the val split. Sigmoid is
-        # a smooth 2-parameter fit — good when val is modest (~2.5k games);
-        # isotonic is more flexible but needs more data or it produces very
-        # blocky step-function outputs. FrozenEstimator prevents
-        # CalibratedClassifierCV from re-fitting the base tree model.
-        X_val, y_val = make_classification_xy(split.val)
-        model = CalibratedClassifierCV(FrozenEstimator(raw), method="sigmoid")
-        model.fit(X_val, y_val)
-
-        # 3. Evaluate the CALIBRATED model on all three splits — this is
-        # what serve-time will use, so it's what should be measured.
+        # 2. Evaluate on all three splits.
         metrics: dict[str, ClassificationMetrics] = {}
         for name, part in [("train", split.train), ("val", split.val), ("test", split.test)]:
             if len(part) == 0:
@@ -332,8 +326,9 @@ def train_xgb_classifier(
             metrics[name] = classification_metrics(y, y_prob)
         _log_metrics(metrics)
 
-        # 4. Log the model (sklearn wrapper) — predict.py loads it.
-        mlflow.sklearn.log_model(model, name="model", serialization_format="cloudpickle")
+        # 3. Log the model via mlflow.xgboost so predict.py's fallback loader
+        # gets it via the fast native path.
+        mlflow.xgboost.log_model(model, name="model")
 
         # 5. Promotion gate: only mark this run as the "one predict.py
         # picks up" if it beats the previously-promoted run on val log_loss.
