@@ -48,6 +48,12 @@ SELECT
     away_pf.k_per_9_l5 AS away_sp_k_per_9_l5,
     away_pf.days_rest AS away_sp_days_rest,
 
+    -- Bullpen form (home + away)
+    home_bp.bullpen_era_l10 AS home_bullpen_era_l10,
+    home_bp.bullpen_ip_l3 AS home_bullpen_ip_l3,
+    away_bp.bullpen_era_l10 AS away_bullpen_era_l10,
+    away_bp.bullpen_ip_l3 AS away_bullpen_ip_l3,
+
     -- Venue
     pf.venue_park_factor_runs,
 
@@ -64,6 +70,10 @@ LEFT JOIN team_rolling home_tr
     ON home_tr.game_pk = g.game_pk AND home_tr.team_id = g.home_team_id
 LEFT JOIN team_rolling away_tr
     ON away_tr.game_pk = g.game_pk AND away_tr.team_id = g.away_team_id
+LEFT JOIN bullpen_form home_bp
+    ON home_bp.game_pk = g.game_pk AND home_bp.team_id = g.home_team_id
+LEFT JOIN bullpen_form away_bp
+    ON away_bp.game_pk = g.game_pk AND away_bp.team_id = g.away_team_id
 ASOF LEFT JOIN pitcher_form home_pf
     ON home_pf.pitcher_id = g.home_probable_pitcher_id
     AND home_pf.game_date <= g.game_date
