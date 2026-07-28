@@ -134,7 +134,13 @@ def _cached_winner_model():
 
 
 def _explanations_for(game_pks: list[int]) -> dict[int, list[tuple[str, float]]]:
-    """Return {game_pk: [(feature, contribution), ...]} for today's games."""
+    """Return {game_pk: [(feature, contribution), ...]} for today's games.
+
+    Returns {} — silently — if any prerequisite is missing (no model,
+    empty features, stale features parquet missing new FEATURE_COLS, or
+    the trained model expects different columns than what's on disk).
+    The game cards just hide the "Why?" expander in that case.
+    """
     if not game_pks:
         return {}
     model, _ = _cached_winner_model()
@@ -143,10 +149,20 @@ def _explanations_for(game_pks: list[int]) -> dict[int, list[tuple[str, float]]]
     features = load_features_for_games(game_pks)
     if features.empty:
         return {}
+    # Guard against stale features parquet on R2 that predates newer
+    # FEATURE_COLS additions (bullpen / IL columns, etc.).
+    missing_cols = [c for c in FEATURE_COLS if c not in features.columns]
+    if missing_cols:
+        return {}
     ordered_pks = [pk for pk in game_pks if pk in features.index]
-    X = features.loc[ordered_pks, FEATURE_COLS]
-    contribs = top_contributions(model, X, FEATURE_COLS, top_n=5)
-    return dict(zip(ordered_pks, contribs, strict=True))
+    if not ordered_pks:
+        return {}
+    try:
+        X = features.loc[ordered_pks, FEATURE_COLS]
+        contribs = top_contributions(model, X, FEATURE_COLS, top_n=5)
+        return dict(zip(ordered_pks, contribs, strict=True))
+    except Exception:
+        return {}
 
 
 tab_today, tab_perf, tab_history = st.tabs(
