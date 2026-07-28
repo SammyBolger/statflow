@@ -152,7 +152,7 @@ docker-compose up --build
 ## Testing
 
 ```bash
-uv run pytest        # 130+ hermetic tests, no network
+uv run pytest        # hermetic — no network
 uv run ruff check    # lint
 uv run ruff format --check
 ```
@@ -162,12 +162,16 @@ uv run ruff format --check
 - [x] **M0** — Repo scaffolding, uv, ruff, pytest, CI
 - [x] **M1** — MLB API client + bronze ingest (schedule, boxscores, plays, transactions)
 - [x] **M2** — Silver layer (DuckDB SQL, 3 tables)
-- [x] **M3** — Historical backfill (7,337 games across 3 seasons) + 8 data quality checks
-- [x] **M4** — Gold feature layer (18 features, anti-leakage tests)
+- [x] **M3** — Historical backfill (multi-season) + 8 data quality checks
+- [x] **M4** — Gold feature layer (~18 features, anti-leakage tests)
 - [x] **M5** — Baselines + LR/Ridge + XGBoost + MLflow tracking + feature importance
 - [x] **M6** — Prefect daily flow + GitHub Actions cron
 - [x] **M7** — Streamlit dashboard (today's games + model performance monitoring)
 - [x] **M8** — Docker + polish
+- [x] **Post-M8** — Cloudflare R2 as source-of-truth storage; hosted on Streamlit Community Cloud
+
+Current data volumes and metrics are visible live on the dashboard —
+they change every day as the pipeline ingests new games.
 
 ## A note on model performance
 
@@ -175,7 +179,7 @@ Beating baselines in MLB prediction is legitimately hard.
 
 - Home teams win ~54% of games historically — that's the naive baseline
 - Vegas books achieve ~55% with far more data (bullpen, weather, umpires, line-move signal)
-- My XGBoost matches the baseline within 0.001 log-loss on validation
+- My XGBoost tracks the baseline closely on validation (live numbers on the dashboard)
 
 That's honest, not a bug. The model is well-calibrated but the feature
 set is signal-limited. To meaningfully improve, the next round of work

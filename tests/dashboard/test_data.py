@@ -201,3 +201,57 @@ def test_runs_scatter_data_returns_expected_columns():
     df = runs_scatter_data(outcomes)
     assert list(df.columns) == ["game_pk", "predicted_total_runs", "actual_total_runs"]
     assert len(df) == 3
+
+
+def test_confidence_tier_breakdown_empty_input():
+    from statflow.dashboard.data import confidence_tier_breakdown
+
+    df = confidence_tier_breakdown(pd.DataFrame())
+    assert list(df.columns) == ["tier", "n", "accuracy"]
+    assert df.empty
+
+
+def test_confidence_tier_breakdown_bins_correctly():
+    """Highest-confidence tier should show 100% accuracy on constructed data."""
+    from statflow.dashboard.data import confidence_tier_breakdown
+
+    outcomes = pd.DataFrame(
+        {
+            "predicted_home_win_prob": [0.52, 0.58, 0.62, 0.68, 0.75, 0.85],
+            "winner_correct": [True, True, False, True, True, True],
+        }
+    )
+    result = confidence_tier_breakdown(outcomes)
+    highest = result[result["tier"] == "70%+"].iloc[0]
+    assert highest["n"] == 2  # 0.75 and 0.85
+    assert highest["accuracy"] == 1.0
+
+
+def test_daily_metrics_trend_empty_input():
+    from statflow.dashboard.data import daily_metrics_trend
+
+    df = daily_metrics_trend(pd.DataFrame())
+    assert {"game_date", "n", "accuracy", "log_loss", "mae"}.issubset(df.columns)
+    assert df.empty
+
+
+def test_daily_metrics_trend_aggregates_by_day():
+    from statflow.dashboard.data import daily_metrics_trend
+
+    outcomes = pd.DataFrame(
+        {
+            "game_date": [
+                pd.Timestamp("2026-07-27"),
+                pd.Timestamp("2026-07-27"),
+                pd.Timestamp("2026-07-28"),
+            ],
+            "winner_correct": [True, False, True],
+            "winner_log_loss": [0.5, 0.8, 0.4],
+            "runs_abs_error": [1.0, 2.0, 3.0],
+        }
+    )
+    df = daily_metrics_trend(outcomes, rolling_days=7)
+    assert len(df) == 2
+    assert df.iloc[0]["accuracy"] == pytest.approx(0.5)
+    assert df.iloc[1]["accuracy"] == 1.0
+    assert "accuracy_rolling" in df.columns

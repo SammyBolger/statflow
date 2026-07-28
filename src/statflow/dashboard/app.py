@@ -21,6 +21,8 @@ import streamlit as st
 from statflow.dashboard.data import (
     baseline_comparison,
     calibration_bins,
+    confidence_tier_breakdown,
+    daily_metrics_trend,
     load_prediction_outcomes,
     load_todays_games,
     rolling_performance,
@@ -201,6 +203,65 @@ with tab_perf:
             c[3].metric("Brier", f"{metrics['brier']:.4f}", help=METRIC_HELP["brier"])
             c[4].metric("MAE runs", f"{metrics['mae']:.2f}", help=METRIC_HELP["mae"])
             c[5].metric("RMSE runs", f"{metrics['rmse']:.2f}", help=METRIC_HELP["rmse"])
+
+        # -------------------------------------------------------------------
+        # Performance trend over time — is the model getting better or worse?
+        # -------------------------------------------------------------------
+        st.subheader("Performance over time")
+        st.caption(
+            "Daily accuracy + log loss with a 7-day rolling average. Sparse "
+            "days are individually noisy; the rolling line is what to watch "
+            "for drift or improvement."
+        )
+        trend = daily_metrics_trend(outcomes)
+        if len(trend) < 2:
+            st.info(
+                f"Only {len(trend)} day of data so far — the trend chart needs "
+                "a few more days of daily-flow runs before it becomes meaningful."
+            )
+        else:
+            trend_long = trend.melt(
+                id_vars=["game_date"],
+                value_vars=["accuracy", "accuracy_rolling"],
+                var_name="series",
+                value_name="value",
+            )
+            acc_chart = (
+                alt.Chart(trend_long)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X("game_date:T", title="Date"),
+                    y=alt.Y("value:Q", title="Accuracy", scale=alt.Scale(domain=[0, 1])),
+                    color=alt.Color(
+                        "series:N",
+                        scale=alt.Scale(
+                            domain=["accuracy", "accuracy_rolling"],
+                            range=["#bbb", "#4c8bf5"],
+                        ),
+                        legend=alt.Legend(title=None, orient="top"),
+                    ),
+                    tooltip=["game_date:T", alt.Tooltip("value:Q", format=".3f")],
+                )
+                .properties(height=220)
+            )
+            st.altair_chart(acc_chart, use_container_width=True)
+
+        # -------------------------------------------------------------------
+        # Confidence tiers — is the model MORE right when it's MORE confident?
+        # -------------------------------------------------------------------
+        st.subheader("Accuracy by confidence tier")
+        st.caption(
+            "How often the model is right, split by how confident it was. "
+            "A useful model is meaningfully more accurate at 70%+ than at 50–55%."
+        )
+        tiers = confidence_tier_breakdown(outcomes)
+        if not tiers.empty:
+            display = tiers.copy()
+            display["accuracy"] = (display["accuracy"] * 100).round(1).astype(str) + "%"
+            display = display.rename(
+                columns={"tier": "Confidence", "n": "Games", "accuracy": "Accuracy"}
+            )
+            st.dataframe(display, hide_index=True, use_container_width=False)
 
         # -------------------------------------------------------------------
         # Model vs baseline bar chart — the "is this model earning its keep?"

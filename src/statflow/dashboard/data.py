@@ -127,6 +127,64 @@ def runs_scatter_data(outcomes: pd.DataFrame) -> pd.DataFrame:
     return outcomes[["game_pk", "predicted_total_runs", "actual_total_runs"]].copy()
 
 
+def confidence_tier_breakdown(outcomes: pd.DataFrame) -> pd.DataFrame:
+    """Accuracy split by how confident the model was on each pick.
+
+    A calibrated + informative model should be MORE accurate on games it was
+    more confident about. Flat accuracy across tiers means the "confidence"
+    doesn't carry real signal.
+    """
+    if outcomes.empty:
+        return pd.DataFrame(columns=["tier", "n", "accuracy"])
+
+    df = outcomes[["predicted_home_win_prob", "winner_correct"]].copy()
+    # Distance from 0.5 — always in [0.5, 1.0], regardless of which team is favored.
+    df["confidence"] = df["predicted_home_win_prob"].apply(lambda p: max(p, 1 - p))
+
+    bins = [0.5, 0.55, 0.60, 0.65, 0.70, 1.0001]
+    labels = ["50–55%", "55–60%", "60–65%", "65–70%", "70%+"]
+    df["tier"] = pd.cut(df["confidence"], bins=bins, labels=labels, include_lowest=True)
+
+    grouped = df.groupby("tier", observed=True).agg(
+        n=("winner_correct", "count"),
+        accuracy=("winner_correct", "mean"),
+    )
+    return grouped.reset_index()
+
+
+def daily_metrics_trend(outcomes: pd.DataFrame, rolling_days: int = 7) -> pd.DataFrame:
+    """Per-day aggregate metrics + a rolling average for the trend chart."""
+    if outcomes.empty:
+        return pd.DataFrame(
+            columns=[
+                "game_date",
+                "n",
+                "accuracy",
+                "log_loss",
+                "mae",
+                "accuracy_rolling",
+                "log_loss_rolling",
+            ]
+        )
+
+    df = outcomes.copy()
+    df["game_date"] = pd.to_datetime(df["game_date"]).dt.date
+    grouped = (
+        df.groupby("game_date")
+        .agg(
+            n=("winner_correct", "count"),
+            accuracy=("winner_correct", "mean"),
+            log_loss=("winner_log_loss", "mean"),
+            mae=("runs_abs_error", "mean"),
+        )
+        .reset_index()
+        .sort_values("game_date")
+    )
+    grouped["accuracy_rolling"] = grouped["accuracy"].rolling(rolling_days, min_periods=1).mean()
+    grouped["log_loss_rolling"] = grouped["log_loss"].rolling(rolling_days, min_periods=1).mean()
+    return grouped
+
+
 def calibration_bins(outcomes: pd.DataFrame, n_bins: int = 10) -> pd.DataFrame:
     """Bin predicted probabilities and compute the actual home-win rate per bin.
 
