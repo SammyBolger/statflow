@@ -60,19 +60,31 @@ jobs:
             data/bronze
           key: statflow-bronze-${{ github.run_id }}
 
-      # Optional Slack notification on failure. No-op if the secret isn't set,
-      # so you can wire this up whenever without a workflow change:
-      #   1. In Slack: Apps -> Incoming Webhooks -> Add to workspace
-      #   2. Copy the webhook URL
-      #   3. Add as GH repo secret SLACK_WEBHOOK_URL
-      - name: Notify Slack on failure
-        if: failure()
+      # Email notification on failure via Gmail SMTP + a Google App Password.
+      # Setup (~2 min, one time):
+      #   1. Google Account -> Security -> 2-Step Verification -> App passwords
+      #      -> generate a 16-char password for "Mail"
+      #   2. Add repo secrets:
+      #        MAIL_USERNAME     = your gmail address (the sender)
+      #        MAIL_APP_PASSWORD = the 16-char app password
+      # No-op if the secrets aren't set — the step is guarded on env.MAIL_USERNAME.
+      - name: Email on failure
+        if: failure() && env.MAIL_USERNAME != ''
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: |
-          if [ -n "$SLACK_WEBHOOK_URL" ]; then
-            RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            curl -sS -X POST -H 'Content-Type: application/json' \
-              --data "{\"text\":\":x: statflow *daily pipeline* failed — <${RUN_URL}|view logs>\"}" \
-              "$SLACK_WEBHOOK_URL"
-          fi
+          MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_APP_PASSWORD }}
+          from: ${{ secrets.MAIL_USERNAME }}
+          to: sammybolger1234@gmail.com
+          subject: "❌ statflow daily pipeline failed"
+          body: |
+            The statflow daily pipeline just failed.
+
+            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            Commit: ${{ github.sha }}
+            Triggered by: ${{ github.event_name }}

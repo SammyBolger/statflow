@@ -36,6 +36,8 @@ FEATURE_COLS: list[str] = [
     "home_bullpen_ip_l3",
     "away_bullpen_era_l10",
     "away_bullpen_ip_l3",
+    "home_il_events_l30",
+    "away_il_events_l30",
     "venue_park_factor_runs",
     "is_day_game",
     "month",

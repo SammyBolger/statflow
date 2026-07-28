@@ -20,10 +20,12 @@ INTERMEDIATE_TRANSFORMS: list[str] = [
     "pitcher_form",
     "park_factors",
     "bullpen_form",
+    "roster_activity",
 ]
+
 FINAL_TRANSFORM = "features"
 
-SILVER_VIEWS = ("games", "team_game_stats", "pitcher_game_stats")
+SILVER_VIEWS = ("games", "team_game_stats", "pitcher_game_stats", "transactions")
 
 
 def build_features(

@@ -104,6 +104,20 @@ _EMPTY_SCHEMAS = {
         "earned_runs": "int64",
         "strikeouts": "int64",
     },
+    "transactions": {
+        "transaction_id": "int64",
+        "transaction_date": "object",
+        "type_code": "object",
+        "type_desc": "object",
+        "description": "object",
+        "person_id": "Int64",
+        "person_name": "object",
+        "from_team_id": "Int64",
+        "from_team_name": "object",
+        "to_team_id": "Int64",
+        "to_team_name": "object",
+        "affects_availability": "bool",
+    },
 }
 
 

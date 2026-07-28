@@ -58,15 +58,24 @@ jobs:
             git push
           fi
 
-      # Slack failure notification — no-op if SLACK_WEBHOOK_URL isn't set.
-      - name: Notify Slack on failure
-        if: failure()
+      # Email failure notification (Gmail SMTP + app password). See daily.yml
+      # for the exact secret setup — MAIL_USERNAME + MAIL_APP_PASSWORD.
+      - name: Email on failure
+        if: failure() && env.MAIL_USERNAME != ''
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: |
-          if [ -n "$SLACK_WEBHOOK_URL" ]; then
-            RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            curl -sS -X POST -H 'Content-Type: application/json' \
-              --data "{\"text\":\":x: statflow *weekly retrain* failed — <${RUN_URL}|view logs>\"}" \
-              "$SLACK_WEBHOOK_URL"
-          fi
+          MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_APP_PASSWORD }}
+          from: ${{ secrets.MAIL_USERNAME }}
+          to: sammybolger1234@gmail.com
+          subject: "❌ statflow weekly retrain failed"
+          body: |
+            The statflow weekly retrain just failed.
+
+            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            Commit: ${{ github.sha }}

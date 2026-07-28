@@ -21,7 +21,7 @@ SQL_DIR = Path(__file__).parent / "sql"
 
 # Silver tables built purely from `.sql` files. Order doesn't matter here —
 # each is derived from bronze only.
-SQL_TRANSFORMS: list[str] = ["games", "team_game_stats"]
+SQL_TRANSFORMS: list[str] = ["games", "team_game_stats", "transactions"]
 
 # Which bronze tables we expose as DuckDB views.
 BRONZE_VIEWS = ("schedule", "boxscores", "plays", "transactions")
@@ -43,9 +43,17 @@ def _register_bronze_views(
     conn: duckdb.DuckDBPyConnection,
     bronze_dir: Path,
 ) -> None:
-    """Expose each bronze table as `bronze_<name>` reading its parquet partitions."""
+    """Expose each bronze table as `bronze_<name>` reading its parquet partitions.
+
+    Skips subdirectories with no parquet files — silver transforms that depend
+    on a missing bronze table will fail with a clear "table not found" error.
+    """
     for name in BRONZE_VIEWS:
-        pattern = str(bronze_dir / name / "**" / "*.parquet")
+        base = bronze_dir / name
+        has_any = base.exists() and any(base.rglob("*.parquet"))
+        if not has_any:
+            continue
+        pattern = str(base / "**" / "*.parquet")
         conn.execute(
             f"CREATE OR REPLACE VIEW bronze_{name} AS SELECT * FROM read_parquet('{pattern}')"
         )

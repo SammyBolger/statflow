@@ -54,6 +54,10 @@ SELECT
     away_bp.bullpen_era_l10 AS away_bullpen_era_l10,
     away_bp.bullpen_ip_l3 AS away_bullpen_ip_l3,
 
+    -- Roster instability (rough proxy for injuries — see roster_activity.sql)
+    home_ra.il_events_l30 AS home_il_events_l30,
+    away_ra.il_events_l30 AS away_il_events_l30,
+
     -- Venue
     pf.venue_park_factor_runs,
 
@@ -74,6 +78,10 @@ LEFT JOIN bullpen_form home_bp
     ON home_bp.game_pk = g.game_pk AND home_bp.team_id = g.home_team_id
 LEFT JOIN bullpen_form away_bp
     ON away_bp.game_pk = g.game_pk AND away_bp.team_id = g.away_team_id
+LEFT JOIN roster_activity home_ra
+    ON home_ra.team_id = g.home_team_id AND home_ra.game_date = g.game_date
+LEFT JOIN roster_activity away_ra
+    ON away_ra.team_id = g.away_team_id AND away_ra.game_date = g.game_date
 ASOF LEFT JOIN pitcher_form home_pf
     ON home_pf.pitcher_id = g.home_probable_pitcher_id
     AND home_pf.game_date <= g.game_date
