@@ -37,6 +37,11 @@ def test_push_uploads_every_file_under_paths(tmp_path):
     _touch(tmp_path, "data/bronze/schedule/date=2026-07-27/schedule.parquet")  # ignored
 
     client = MagicMock()
+    # Remote HEAD returns None (via ClientError) — file doesn't exist yet remotely.
+    from botocore.exceptions import ClientError
+
+    client.head_object.side_effect = ClientError({"Error": {"Code": "404"}}, "HeadObject")
+
     n = r2.push(
         paths=("data/silver", "data/gold", "mlartifacts"),
         root=tmp_path,
@@ -57,8 +62,39 @@ def test_push_uploads_every_file_under_paths(tmp_path):
 def test_push_skips_missing_directories(tmp_path):
     _touch(tmp_path, "data/silver/games/games.parquet")
     client = MagicMock()
+    from botocore.exceptions import ClientError
+
+    client.head_object.side_effect = ClientError({"Error": {"Code": "404"}}, "HeadObject")
+
     n = r2.push(paths=("data/silver", "mlartifacts"), root=tmp_path, client=client)
     assert n == 1  # only the silver file — mlartifacts didn't exist
+
+
+def test_push_skips_unchanged_files(tmp_path):
+    """If the remote ETag matches the local file's MD5, don't re-upload."""
+    _touch(tmp_path, "data/silver/games/games.parquet")
+
+    client = MagicMock()
+    # Simulate the remote object having the same content as the local file.
+    local_md5 = r2._md5_of_file(tmp_path / "data" / "silver" / "games" / "games.parquet")
+    client.head_object.return_value = {"ETag": f'"{local_md5}"'}
+
+    n = r2.push(paths=("data/silver",), root=tmp_path, client=client)
+    assert n == 0  # skipped — no uploads
+    client.upload_file.assert_not_called()
+
+
+def test_push_reuploads_when_content_changes(tmp_path):
+    """If the remote ETag differs from the local file's MD5, re-upload."""
+    _touch(tmp_path, "data/silver/games/games.parquet")
+
+    client = MagicMock()
+    # Simulate the remote object having *different* content.
+    client.head_object.return_value = {"ETag": '"deadbeef"'}
+
+    n = r2.push(paths=("data/silver",), root=tmp_path, client=client)
+    assert n == 1
+    client.upload_file.assert_called_once()
 
 
 def test_pull_downloads_all_listed_objects(tmp_path):

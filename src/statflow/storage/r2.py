@@ -27,6 +27,7 @@ Or from the shell:
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import sqlite3
@@ -35,6 +36,7 @@ from pathlib import Path
 
 import boto3
 from botocore.client import Config
+from botocore.exceptions import ClientError
 
 from statflow.config import PROJECT_ROOT
 
@@ -65,15 +67,40 @@ def _bucket() -> str:
     return os.environ.get("R2_BUCKET", "statflow")
 
 
+def _md5_of_file(path: Path) -> str:
+    """MD5 of a file's contents in hex — matches R2's ETag for non-multipart uploads."""
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 16), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _remote_etag(s3, bucket: str, key: str) -> str | None:
+    """Return the R2 object's ETag (unquoted) or None if it doesn't exist."""
+    try:
+        head = s3.head_object(Bucket=bucket, Key=key)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in {"404", "NoSuchKey", "NotFound"}:
+            return None
+        return None  # any other error → err on side of uploading
+    return head.get("ETag", "").strip('"')
+
+
 def push(
     paths: Iterable[str] = DEFAULT_SYNC_PATHS,
     root: Path = PROJECT_ROOT,
     client=None,
 ) -> int:
-    """Upload every file under each path to R2 under the same relative key."""
+    """Upload every file under each path to R2 — skipping files that are
+    already present with matching content (ETag / MD5 equal).
+
+    Incremental sync dramatically reduces daily-flow upload volume:
+    most parquet files are re-generated identically each morning.
+    """
     s3 = client or _client()
     bucket = _bucket()
-    n = 0
+    uploaded = 0
     for rel in paths:
         base = root / rel
         if not base.exists():
@@ -82,9 +109,13 @@ def push(
             if not path.is_file():
                 continue
             key = str(path.relative_to(root))
+            local_md5 = _md5_of_file(path)
+            remote = _remote_etag(s3, bucket, key)
+            if remote == local_md5:
+                continue  # unchanged — skip
             s3.upload_file(str(path), bucket, key)
-            n += 1
-    return n
+            uploaded += 1
+    return uploaded
 
 
 def pull(

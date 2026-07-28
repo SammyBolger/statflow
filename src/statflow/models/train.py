@@ -186,7 +186,7 @@ def train_xgb_regressor(
     }
     _init_mlflow(RUNS_EXPERIMENT)
 
-    with mlflow.start_run(run_name=run_name):
+    with mlflow.start_run(run_name=run_name) as active_run:
         mlflow.log_params(params)
         mlflow.set_tag("model_family", "xgboost")
 
@@ -195,6 +195,11 @@ def train_xgb_regressor(
 
         _log_metrics(metrics)
         mlflow.xgboost.log_model(model, name="model")
+
+        # Persist a diff-friendly markdown card of this run for the repo.
+        from statflow.models.model_card import write_model_card
+
+        write_model_card(active_run.info.run_id, RUNS_EXPERIMENT, "xgboost")
 
     return model, metrics
 
@@ -244,7 +249,7 @@ def train_xgb_classifier(
     }
     _init_mlflow(WINNER_EXPERIMENT)
 
-    with mlflow.start_run(run_name=run_name):
+    with mlflow.start_run(run_name=run_name) as active_run:
         mlflow.log_params(params)
         mlflow.set_tag("model_family", "xgboost")
 
@@ -253,5 +258,9 @@ def train_xgb_classifier(
 
         _log_metrics(metrics)
         mlflow.xgboost.log_model(model, name="model")
+
+        from statflow.models.model_card import write_model_card
+
+        write_model_card(active_run.info.run_id, WINNER_EXPERIMENT, "xgboost")
 
     return model, metrics
