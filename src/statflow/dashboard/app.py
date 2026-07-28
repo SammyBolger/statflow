@@ -1,11 +1,17 @@
 """StatFlow dashboard.
 
-Run with:
+Local dev:
     uv run streamlit run src/statflow/dashboard/app.py
+
+Hosted (Streamlit Community Cloud): same file. When R2 credentials are
+provided via Streamlit's secrets store, the app pulls the latest silver/
+gold state from R2 into a local temp dir on cold-start, so the same
+loaders work in both environments.
 """
 
 from __future__ import annotations
 
+import os
 from datetime import date
 
 import altair as alt
@@ -20,6 +26,40 @@ from statflow.dashboard.data import (
     rolling_performance,
     runs_scatter_data,
 )
+
+
+@st.cache_resource
+def _bootstrap_from_r2() -> str:
+    """On cold-start, if R2 secrets are configured, pull silver/gold from R2.
+
+    Runs once per app process (cache_resource semantics). No-op locally when
+    R2 isn't set — the loaders then read data/ off local disk, which is how
+    local dev works. Any error is caught + surfaced as a warning so the
+    dashboard still boots (just with empty data).
+    """
+    try:
+        has_r2 = "R2_ACCOUNT_ID" in st.secrets
+    except Exception:
+        # No secrets.toml (typical local dev) — st.secrets access can raise.
+        has_r2 = False
+    if not has_r2:
+        return "R2 not configured — using local data/"
+
+    for key in ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"):
+        if key in st.secrets:
+            os.environ[key] = str(st.secrets[key])
+
+    try:
+        from statflow.storage.r2 import pull
+
+        n = pull()
+        return f"pulled {n} file(s) from R2"
+    except Exception as exc:
+        st.warning(f"R2 pull failed — showing whatever's cached: {exc}")
+        return f"R2 pull failed: {exc}"
+
+
+_bootstrap_from_r2()
 
 # One-line help strings so every metric has a hoverable "?" explaining it.
 # No hardcoded baseline numbers — those are computed live in the
