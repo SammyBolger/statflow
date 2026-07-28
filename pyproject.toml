@@ -24,6 +24,13 @@ dev = [
     "pre-commit>=3.7",
     "responses>=0.25",
 ]
+# `dbt` is an optional alternative build path for the silver + gold layers.
+# The Python runner in src/statflow/{transform,features}/runner.py is the
+# primary code path — dbt exists to prove the pattern converts cleanly to
+# an industry-standard toolchain (and for the interview talking point).
+dbt = [
+    "dbt-duckdb>=1.8",
+]
 
 [build-system]
 requires = ["hatchling"]

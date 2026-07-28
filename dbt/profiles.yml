@@ -1,0 +1,16 @@
+# dbt profile: local DuckDB, no server.
+#
+# Run from the project root:
+#   uv run --extra dbt dbt build --project-dir dbt --profiles-dir dbt
+
+statflow:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      # In-memory database — models are materialized as external parquet
+      # files (see dbt_project.yml), so we don't need a persistent DB file.
+      path: ':memory:'
+      threads: 4
+      extensions:
+        - httpfs

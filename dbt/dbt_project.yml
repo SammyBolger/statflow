@@ -1,0 +1,39 @@
+# dbt project: statflow silver + gold as dbt-duckdb models.
+#
+# Coexists with the Python runner (src/statflow/transform + features). The
+# Python runner remains the primary build path used by the daily flow. This
+# dbt project demonstrates that the same handwritten SQL layers convert
+# cleanly to a real dbt toolchain — one silver model + one gold model are
+# migrated as showcase. Extend by copying more .sql files from
+# src/statflow/*/sql/ into models/silver/ or models/gold/, wrapping bronze
+# references with `{{ source('bronze', 'X') }}` and inter-model references
+# with `{{ ref('Y') }}`.
+
+name: 'statflow'
+version: '1.0.0'
+config-version: 2
+
+profile: 'statflow'
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  statflow:
+    # Every model materializes as a parquet file next to whatever the Python
+    # runner writes — the two builds land in the same place, so downstream
+    # code doesn't care which produced the file.
+    # Paths are relative to CWD — run `dbt build` from the repo root.
+    +materialized: external
+    +format: parquet
+    silver:
+      +location: "data/silver/{{ this.name }}/{{ this.name }}.parquet"
+    gold:
+      +location: "data/gold/{{ this.name }}/{{ this.name }}.parquet"

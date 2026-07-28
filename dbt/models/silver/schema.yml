@@ -1,0 +1,24 @@
+version: 2
+
+models:
+  - name: games
+    description: "One row per MLB game with typed fields extracted from bronze schedule JSON."
+    columns:
+      - name: game_pk
+        description: "MLB's unique game identifier."
+        tests:
+          - unique
+          - not_null
+      - name: game_date
+        tests:
+          - not_null
+      - name: home_team_id
+        tests:
+          - not_null
+      - name: away_team_id
+        tests:
+          - not_null
+      - name: home_win
+        description: "TRUE/FALSE if game is Final, NULL otherwise (target for classifier)."
+      - name: total_runs
+        description: "home_score + away_score when Final, NULL otherwise (target for regressor)."

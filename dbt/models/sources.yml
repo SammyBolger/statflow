@@ -1,0 +1,14 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: "Raw MLB API JSON stored in Hive-partitioned parquet."
+    meta:
+      external_location: "data/bronze/{name}/**/*.parquet"
+    tables:
+      - name: schedule
+        description: "One row per game per date — with the raw game JSON in payload."
+      - name: boxscores
+        description: "One row per game — with the boxscore JSON in payload."
+      - name: transactions
+        description: "One row per transaction (IL moves, trades, roster changes)."
