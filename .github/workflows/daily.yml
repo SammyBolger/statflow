@@ -3,15 +3,19 @@ name: Daily pipeline
 on:
   schedule:
     # 11:00 UTC daily = 7am ET, after most MLB games from the prior day
-    # have posted final boxscores. Adjust if you want a different window.
+    # have posted final boxscores.
     - cron: "0 11 * * *"
-  workflow_dispatch:  # allow manual trigger from the Actions tab
+  workflow_dispatch:
 
 jobs:
   run-daily:
     runs-on: ubuntu-latest
-    # Only run on the source repo, not on forks (which won't have secrets).
     if: github.repository == 'SammyBolger/statflow'
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
     steps:
       - uses: actions/checkout@v4
 
@@ -23,31 +27,35 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
-      # Fetch the current data/mlflow.db/mlartifacts state cached from the
-      # prior day's run. Falls back gracefully if no cache exists yet
-      # (first run rebuilds from scratch by ingesting today only).
-      - name: Restore pipeline state cache
-        id: cache-state
+      # Bronze parquet is large (~1.4 GB) and rebuildable — keep it in the
+      # GH Actions cache, not R2. Silver / gold / mlartifacts (the "clean"
+      # state that the dashboard reads) get pushed to R2 at the end.
+      - name: Restore bronze cache
         uses: actions/cache@v4
         with:
           path: |
-            data
-            mlflow.db
-            mlartifacts
-          key: statflow-pipeline-state-${{ github.run_id }}
+            data/bronze
+          key: statflow-bronze-${{ github.run_id }}
           restore-keys: |
-            statflow-pipeline-state-
+            statflow-bronze-
+
+      # R2 holds the persistent silver/gold/mlartifacts state — same state the
+      # hosted dashboard reads from. Pull fresh at start so we work off the
+      # latest snapshot, not a stale local cache.
+      - name: Pull silver/gold/mlartifacts from R2
+        run: uv run python -m statflow.storage pull || echo "R2 empty (first run) — pipeline will populate it"
 
       - name: Run daily pipeline
         run: uv run python -m statflow.flows
 
-      # Save updated state so tomorrow's run inherits today's bronze/silver/gold.
-      - name: Save pipeline state cache
+      - name: Push updated silver/gold/mlartifacts to R2
+        if: success()
+        run: uv run python -m statflow.storage push
+
+      - name: Save bronze cache
         if: always()
         uses: actions/cache/save@v4
         with:
           path: |
-            data
-            mlflow.db
-            mlartifacts
-          key: statflow-pipeline-state-${{ github.run_id }}
+            data/bronze
+          key: statflow-bronze-${{ github.run_id }}

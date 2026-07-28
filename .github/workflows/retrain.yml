@@ -3,14 +3,19 @@ name: Weekly retrain
 on:
   schedule:
     # 12:00 UTC every Sunday = 8am ET. Runs *after* the morning daily flow
-    # (11:00 UTC) so the training data is as fresh as possible for the week.
+    # so training data is as fresh as possible for the week.
     - cron: "0 12 * * 0"
-  workflow_dispatch:  # manual trigger from the Actions tab
+  workflow_dispatch:
 
 jobs:
   retrain:
     runs-on: ubuntu-latest
     if: github.repository == 'SammyBolger/statflow'
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
     steps:
       - uses: actions/checkout@v4
 
@@ -22,31 +27,17 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
-      # Restore accumulated pipeline state (bronze/silver/gold + mlartifacts)
-      # from the same cache pool as daily.yml — so retraining sees the latest
-      # gold features and gets appended into the same MLflow DB.
-      - name: Restore pipeline state cache
-        id: cache-state
-        uses: actions/cache@v4
-        with:
-          path: |
-            data
-            mlartifacts
-          key: statflow-pipeline-state-${{ github.run_id }}
-          restore-keys: |
-            statflow-pipeline-state-
+      # Pull the latest silver/gold/mlartifacts from R2. Training reads
+      # gold/features and appends new runs to mlartifacts/mlflow.db.
+      - name: Pull silver/gold/mlartifacts from R2
+        run: uv run python -m statflow.storage pull
 
       - name: Retrain models
         # Creates fresh XGBoost runs in mlartifacts/mlflow.db. Next daily
         # flow's predict step calls mlflow.search_runs(...order_by=start_time DESC)
-        # and automatically picks these up — no manual model-swap needed.
+        # and picks these up — no manual model swap needed.
         run: uv run python -m statflow.models train
 
-      - name: Save pipeline state cache
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            data
-            mlartifacts
-          key: statflow-pipeline-state-${{ github.run_id }}
+      - name: Push updated mlartifacts to R2
+        if: success()
+        run: uv run python -m statflow.storage push
