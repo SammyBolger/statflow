@@ -27,6 +27,7 @@ from statflow.dashboard.data import (
     load_historical_predictions,
     load_prediction_outcomes,
     load_todays_games,
+    market_comparison,
     rolling_performance,
     runs_scatter_data,
 )
@@ -375,6 +376,49 @@ with tab_perf:
                 .resolve_scale(y="independent")
             )
             st.altair_chart(chart, use_container_width=False)
+
+        # -------------------------------------------------------------------
+        # Model vs market — the "how close am I to Vegas?" chart.
+        # Only renders when odds ingestion is enabled and has produced data
+        # for games that also have predictions.
+        # -------------------------------------------------------------------
+        market_df = market_comparison(outcomes)
+        if not market_df.empty:
+            st.subheader("Model vs market")
+            st.caption(
+                "Head-to-head against the closing sportsbook line on games "
+                "the model has predicted. Market probabilities are de-vigged "
+                "moneyline averages across US books; the totals number is "
+                "the average over/under line. Beating the market on any of "
+                "these metrics would be an eye-catching result — matching it "
+                "closely is a strong outcome for a public-data model."
+            )
+            long = market_df.melt(
+                id_vars=["metric"],
+                value_vars=["model", "market"],
+                var_name="source",
+                value_name="value",
+            )
+            market_chart = (
+                alt.Chart(long)
+                .mark_bar()
+                .encode(
+                    x=alt.X("source:N", title=None, axis=alt.Axis(labels=False, ticks=False)),
+                    y=alt.Y("value:Q", title=None),
+                    color=alt.Color(
+                        "source:N",
+                        scale=alt.Scale(domain=["model", "market"], range=["#4c8bf5", "#e97a3c"]),
+                        legend=alt.Legend(title=None, orient="top"),
+                    ),
+                    tooltip=["metric", "source", alt.Tooltip("value:Q", format=".4f")],
+                )
+                .properties(width=120, height=180)
+                .facet(
+                    column=alt.Column("metric:N", title=None, header=alt.Header(labelFontSize=13))
+                )
+                .resolve_scale(y="independent")
+            )
+            st.altair_chart(market_chart, use_container_width=False)
 
         # -------------------------------------------------------------------
         # Predicted vs actual runs — an interpretable single-chart view.

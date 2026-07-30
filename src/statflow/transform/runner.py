@@ -37,6 +37,7 @@ def build_silver(
     for name in SQL_TRANSFORMS:
         _run_sql_transform(conn, name, silver_dir)
     _build_pitcher_game_stats(conn, silver_dir)
+    _build_odds_silver(bronze_dir, silver_dir)
 
 
 def _register_bronze_views(
@@ -147,5 +148,134 @@ def _build_pitcher_game_stats(
     out_dir = silver_dir / "pitcher_game_stats"
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "pitcher_game_stats.parquet"
+    df.to_parquet(path, index=False)
+    return path
+
+
+def _american_to_implied_prob(price: float | int) -> float:
+    """American moneyline odds → implied probability (0..1), pre-devig.
+
+    Positive numbers (e.g. +150) pay $150 on a $100 bet; negative numbers
+    (e.g. -150) require a $150 bet to win $100. Both encode the book's
+    price for the outcome; the raw prob still carries the vig, so callers
+    normalize a two-outcome market by dividing each raw prob by their sum.
+    """
+    price = float(price)
+    if price < 0:
+        return -price / (-price + 100.0)
+    return 100.0 / (price + 100.0)
+
+
+def _summarize_game_odds(payload: dict) -> dict[str, float | None]:
+    """Average moneyline (as devigged probs) + total line across books.
+
+    Returns a dict with `market_home_win_prob`, `market_away_win_prob`,
+    `market_total_line`, and per-market book counts. Missing values are
+    None. Assumes the payload came from The Odds API v4.
+    """
+    home_team = payload.get("home_team")
+    away_team = payload.get("away_team")
+
+    home_probs: list[float] = []
+    away_probs: list[float] = []
+    totals: list[float] = []
+
+    for book in payload.get("bookmakers", []):
+        for market in book.get("markets", []):
+            outcomes = market.get("outcomes", [])
+            if market.get("key") == "h2h":
+                h_raw = a_raw = None
+                for o in outcomes:
+                    if o.get("name") == home_team and o.get("price") is not None:
+                        h_raw = _american_to_implied_prob(o["price"])
+                    elif o.get("name") == away_team and o.get("price") is not None:
+                        a_raw = _american_to_implied_prob(o["price"])
+                if h_raw is not None and a_raw is not None and (h_raw + a_raw) > 0:
+                    # Devig by normalizing so the two probs sum to 1.
+                    total = h_raw + a_raw
+                    home_probs.append(h_raw / total)
+                    away_probs.append(a_raw / total)
+            elif market.get("key") == "totals":
+                # Over/under share the same `point`; take either outcome's point.
+                for o in outcomes:
+                    if o.get("point") is not None:
+                        totals.append(float(o["point"]))
+                        break
+
+    def _mean(xs: list[float]) -> float | None:
+        return sum(xs) / len(xs) if xs else None
+
+    return {
+        "market_home_win_prob": _mean(home_probs),
+        "market_away_win_prob": _mean(away_probs),
+        "market_total_line": _mean(totals),
+        "n_books_moneyline": len(home_probs),
+        "n_books_totals": len(totals),
+    }
+
+
+def _build_odds_silver(bronze_dir: Path, silver_dir: Path) -> Path | None:
+    """Flatten bronze odds parquet to one row per game, joined to game_pk.
+
+    Bronze holds one row per (game, ingested_at) with the raw Odds API
+    payload. Silver averages moneyline (devigged) + total line across
+    bookmakers and left-joins to silver.games on (game_date, home_team).
+    Returns None if no bronze odds partitions exist yet.
+    """
+    odds_root = bronze_dir / "odds"
+    paths = sorted(odds_root.rglob("*.parquet")) if odds_root.exists() else []
+    if not paths:
+        return None
+
+    # Read one file at a time and concat, so Hive-style partition-key
+    # inference doesn't collide with our internal `date` column.
+    bronze_df = pd.concat([pd.read_parquet(p) for p in paths], ignore_index=True)
+    rows: list[dict] = []
+    for record in bronze_df.itertuples(index=False):
+        payload = json.loads(record.payload)
+        summary = _summarize_game_odds(payload)
+        rows.append(
+            {
+                "odds_event_id": record.odds_event_id,
+                "odds_date": record.date,
+                "home_team": record.home_team,
+                "away_team": record.away_team,
+                "commence_time": record.commence_time,
+                "fetched_at": record.fetched_at,
+                **summary,
+            }
+        )
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        # Latest fetch per (date, home_team, away_team) wins — same
+        # dedup pattern as the SQL silver tables.
+        df = df.sort_values("fetched_at").drop_duplicates(
+            subset=["odds_date", "home_team", "away_team"], keep="last"
+        )
+
+    # Join to silver.games to attach game_pk when possible. Team names from
+    # The Odds API match the MLB Stats API's `team.name` field for MLB in
+    # the vast majority of cases; unmatched rows keep game_pk=NULL and
+    # surface as a data-quality issue.
+    games_path = silver_dir / "games" / "games.parquet"
+    if games_path.exists() and not df.empty:
+        games = pd.read_parquet(games_path)[
+            ["game_pk", "game_date", "home_team_name", "away_team_name"]
+        ].copy()
+        games["game_date"] = pd.to_datetime(games["game_date"]).dt.date.astype(str)
+        df = df.merge(
+            games,
+            how="left",
+            left_on=["odds_date", "home_team", "away_team"],
+            right_on=["game_date", "home_team_name", "away_team_name"],
+        ).drop(columns=["home_team_name", "away_team_name"])
+    else:
+        df["game_pk"] = pd.NA
+        df["game_date"] = pd.NA
+
+    out_dir = silver_dir / "odds"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "odds.parquet"
     df.to_parquet(path, index=False)
     return path

@@ -69,6 +69,23 @@ def build_prediction_outcomes(
     df["runs_abs_error"] = (df["predicted_total_runs"] - df["actual_total_runs"]).abs()
     df["runs_squared_error"] = (df["predicted_total_runs"] - df["actual_total_runs"]) ** 2
 
+    # Attach market line + market-implied probability if silver.odds exists.
+    # NULL when there's no matching odds row (odds ingest disabled, or the
+    # game happened before we started pulling lines).
+    odds_path = silver_dir / "odds" / "odds.parquet"
+    if odds_path.exists():
+        odds = pd.read_parquet(odds_path)[
+            ["game_pk", "market_home_win_prob", "market_total_line"]
+        ].dropna(subset=["game_pk"])
+        odds["game_pk"] = odds["game_pk"].astype(df["game_pk"].dtype, errors="ignore")
+        df = df.merge(odds, on="game_pk", how="left")
+        df["market_winner_brier"] = np.where(
+            df["market_home_win_prob"].notna(),
+            (df["market_home_win_prob"] - df["actual_home_win"]) ** 2,
+            np.nan,
+        )
+        df["market_runs_abs_error"] = (df["market_total_line"] - df["actual_total_runs"]).abs()
+
     # If a game was re-predicted by a newer model run, prefer the freshest.
     df = df.sort_values("predicted_at").drop_duplicates(
         subset=["game_pk", "winner_model_run_id"], keep="last"

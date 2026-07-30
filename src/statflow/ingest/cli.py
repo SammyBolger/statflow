@@ -18,6 +18,7 @@ import pandas as pd
 from statflow.config import BRONZE_DIR
 from statflow.ingest.boxscores import ingest_boxscores
 from statflow.ingest.mlb_api import MLBStatsAPI
+from statflow.ingest.odds import ingest_odds
 from statflow.ingest.plays import ingest_plays
 from statflow.ingest.schedule import ingest_schedule
 from statflow.ingest.transactions import ingest_transactions
@@ -77,6 +78,18 @@ def run_daily_ingest(
         print("  none")
     else:
         print(f"  -> {txn_path}")
+
+    print(f"[odds] {target_date}")
+    odds_path = ingest_odds(
+        target_date,
+        out_dir=_partition_dir(base_dir, "odds", target_date),
+    )
+    if odds_path is None:
+        # No ODDS_API_KEY, no upcoming games from the API, or the
+        # backfill day is too old for a current-snapshot endpoint.
+        print("  skipped (no key or no games)")
+    else:
+        print(f"  -> {odds_path}")
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:

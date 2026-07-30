@@ -166,6 +166,53 @@ def baseline_comparison(outcomes: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def market_comparison(outcomes: pd.DataFrame) -> pd.DataFrame:
+    """Model vs market metrics on games that have BOTH predictions and market data.
+
+    Empty DataFrame if `outcomes` has no market columns yet (odds ingest not
+    enabled) or if the intersection of games with a model prediction and a
+    market line is empty.
+    """
+    if outcomes.empty or "market_home_win_prob" not in outcomes.columns:
+        return pd.DataFrame()
+
+    both = outcomes.dropna(subset=["market_home_win_prob", "market_total_line"])
+    if both.empty:
+        return pd.DataFrame()
+
+    import numpy as np
+
+    actual_wins = both["actual_home_win"].astype(int).to_numpy()
+    m_prob = both["market_home_win_prob"].to_numpy(dtype=float).clip(1e-15, 1 - 1e-15)
+    p_prob = both["predicted_home_win_prob"].to_numpy(dtype=float).clip(1e-15, 1 - 1e-15)
+    market_log_loss = float(
+        -(actual_wins * np.log(m_prob) + (1 - actual_wins) * np.log(1 - m_prob)).mean()
+    )
+    model_log_loss = float(
+        -(actual_wins * np.log(p_prob) + (1 - actual_wins) * np.log(1 - p_prob)).mean()
+    )
+
+    return pd.DataFrame(
+        [
+            {
+                "metric": "Log loss",
+                "model": model_log_loss,
+                "market": market_log_loss,
+            },
+            {
+                "metric": "Brier",
+                "model": float(both["winner_brier"].mean()),
+                "market": float(both["market_winner_brier"].mean()),
+            },
+            {
+                "metric": "MAE (runs)",
+                "model": float(both["runs_abs_error"].mean()),
+                "market": float(both["market_runs_abs_error"].mean()),
+            },
+        ]
+    )
+
+
 def runs_scatter_data(outcomes: pd.DataFrame) -> pd.DataFrame:
     """One row per completed game: predicted vs actual total runs."""
     if outcomes.empty:
