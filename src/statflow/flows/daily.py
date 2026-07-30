@@ -12,7 +12,7 @@ externally via GitHub Actions cron.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 from prefect import flow, get_run_logger, task
 
@@ -22,12 +22,23 @@ from statflow.models.outcomes import build_prediction_outcomes
 from statflow.models.predict import predict_for_date
 from statflow.transform.runner import build_silver
 
+# Re-ingest today + this many prior days each run. Yesterday is the important
+# one: its 7am-scaffold boxscore (all zeros, no Final status) needs to be
+# overwritten with the finalized version so prediction_outcomes can grade
+# yesterday's predictions and rolling stats stop being polluted by scaffolds.
+# 2 prior days is enough buffer for late-completing West Coast games and the
+# occasional missed daily-flow run.
+INGEST_BACKFILL_DAYS = 3
+
 
 @task(retries=3, retry_delay_seconds=[10, 30, 60], log_prints=True)
-def ingest(target_date: date) -> None:
-    """Refresh bronze for `target_date`. Retries because HTTP fails happen."""
-    get_run_logger().info(f"ingesting {target_date}")
-    run_daily_ingest(target_date)
+def ingest(target_date: date, backfill_days: int = INGEST_BACKFILL_DAYS) -> None:
+    """Refresh bronze for `target_date` and the last `backfill_days - 1` prior days."""
+    logger = get_run_logger()
+    for delta in range(backfill_days - 1, -1, -1):
+        d = target_date - timedelta(days=delta)
+        logger.info(f"ingesting {d}")
+        run_daily_ingest(d)
 
 
 @task(log_prints=True)

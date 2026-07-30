@@ -8,9 +8,9 @@ etc. is covered by their own module tests.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
-from statflow.flows.daily import daily_pipeline
+from statflow.flows.daily import INGEST_BACKFILL_DAYS, daily_pipeline
 
 
 def test_daily_pipeline_calls_all_steps_in_order(monkeypatch):
@@ -37,11 +37,24 @@ def test_daily_pipeline_calls_all_steps_in_order(monkeypatch):
     daily_pipeline(target_date=date(2026, 7, 27))
 
     names = [c[0] for c in called]
-    assert names == ["ingest", "silver", "features", "predict", "outcomes"]
+    # ingest runs once per day in the rolling window, then the rest of the pipeline once.
+    assert names == ["ingest"] * INGEST_BACKFILL_DAYS + [
+        "silver",
+        "features",
+        "predict",
+        "outcomes",
+    ]
 
-    # ingest and predict receive the target date
-    assert called[0][1] == (date(2026, 7, 27),)
-    assert called[3][1] == (date(2026, 7, 27),)
+    # The rolling window is oldest -> today so yesterday's data is on disk
+    # before today gets refreshed.
+    ingest_dates = [c[1][0] for c in called if c[0] == "ingest"]
+    assert ingest_dates == [
+        date(2026, 7, 27) - timedelta(days=delta)
+        for delta in range(INGEST_BACKFILL_DAYS - 1, -1, -1)
+    ]
+    # predict receives the target date (not any of the earlier backfill dates)
+    predict_call = next(c for c in called if c[0] == "predict")
+    assert predict_call[1] == (date(2026, 7, 27),)
 
 
 def test_daily_pipeline_defaults_to_today(monkeypatch):
@@ -54,5 +67,6 @@ def test_daily_pipeline_defaults_to_today(monkeypatch):
 
     daily_pipeline()
 
-    assert len(got_dates) == 1
-    assert got_dates[0] == date.today()
+    assert len(got_dates) == INGEST_BACKFILL_DAYS
+    # Last ingest is always today; earlier entries are the backfill days.
+    assert got_dates[-1] == date.today()
