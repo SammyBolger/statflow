@@ -293,12 +293,7 @@ with tab_perf:
             "for drift or improvement."
         )
         trend = daily_metrics_trend(outcomes)
-        if len(trend) < 2:
-            st.info(
-                f"Only {len(trend)} day of data so far — the trend chart needs "
-                "a few more days of daily-flow runs before it becomes meaningful."
-            )
-        else:
+        if not trend.empty:
             trend_long = trend.melt(
                 id_vars=["game_date"],
                 value_vars=["accuracy", "accuracy_rolling"],
