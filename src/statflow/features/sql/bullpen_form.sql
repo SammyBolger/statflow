@@ -1,35 +1,53 @@
 -- Gold intermediate: bullpen_form
 --
--- Grain: one row per (game_pk, team_id) — for games where relievers appeared.
+-- Grain: one row per (game_pk, team_id) for every game (Final + Scheduled).
 -- Purpose: team bullpen quality + recent fatigue, going into each game.
 --
 -- Bullpen features are widely regarded as the single biggest missing signal
--- in a basic MLB model built on pre-game stats alone. Adding two:
+-- in a basic MLB model built on pre-game stats alone. Two features:
 --   * bullpen_era_l10 — cumulative ERA over the last 10 team-games (form)
 --   * bullpen_ip_l3   — total bullpen innings over the last 3 (fatigue proxy)
 --
--- Same anti-leakage discipline as team_rolling and pitcher_form:
--- ROWS BETWEEN N PRECEDING AND 1 PRECEDING excludes the current row.
+-- Anti-leakage: ROWS BETWEEN N PRECEDING AND 1 PRECEDING excludes the current row.
+--
+-- Anti-scaffold: pitcher_game_stats has no rows for scheduled games (no
+-- relievers have thrown yet), so joining directly would drop scheduled
+-- games entirely. Instead we start from a team-per-game skeleton derived
+-- from silver.games, then LEFT JOIN to reliever stats. Non-Final rows
+-- contribute NULL to the aggregates and are ignored by SUM.
+--
+-- Depends on registered views: games, pitcher_game_stats.
 
-WITH team_bullpen AS (
-    -- One row per (game, team) with that team's relief-pitching totals.
+WITH team_game_pairs AS (
+    -- Skeleton: one row per (game, team) for every game in silver.games.
+    -- Scheduled games get a row here so features.sql's direct join finds them.
+    SELECT g.game_pk, g.game_date, g.status, g.home_team_id AS team_id FROM games g
+    UNION ALL
+    SELECT g.game_pk, g.game_date, g.status, g.away_team_id AS team_id FROM games g
+),
+team_bullpen AS (
+    -- Reliever totals per (game, team). CASE-guard: only Final games
+    -- contribute real numbers; everything else is NULL and gets ignored
+    -- by the window SUMs below.
     SELECT
-        p.game_pk,
-        p.team_id,
-        g.game_date,
-        SUM(p.innings_pitched) AS bp_ip,
-        SUM(p.earned_runs) AS bp_er
-    FROM pitcher_game_stats p
-    JOIN games g ON g.game_pk = p.game_pk
-    WHERE p.is_starter = FALSE
-    GROUP BY p.game_pk, p.team_id, g.game_date
+        tgp.game_pk,
+        tgp.team_id,
+        tgp.game_date,
+        SUM(CASE WHEN tgp.status = 'Final' THEN p.innings_pitched END) AS bp_ip,
+        SUM(CASE WHEN tgp.status = 'Final' THEN p.earned_runs END) AS bp_er
+    FROM team_game_pairs tgp
+    LEFT JOIN pitcher_game_stats p
+        ON p.game_pk = tgp.game_pk
+        AND p.team_id = tgp.team_id
+        AND p.is_starter = FALSE
+    GROUP BY tgp.game_pk, tgp.team_id, tgp.game_date
 )
 SELECT
     game_pk,
     team_id,
     SUM(bp_er) OVER w_form * 9.0 / NULLIF(SUM(bp_ip) OVER w_form, 0) AS bullpen_era_l10,
     SUM(bp_ip) OVER w_fatigue AS bullpen_ip_l3,
-    COUNT(*) OVER w_form AS bullpen_prior_games
+    COUNT(bp_ip) OVER w_form AS bullpen_prior_games
 FROM team_bullpen
 WINDOW
     w_form AS (
